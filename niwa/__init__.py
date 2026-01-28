@@ -1,6 +1,6 @@
 """niwa - Auto-split package"""
 
-__version__ = "0.2.0"
+__version__ = "0.2.2"
 
 from .niwa import Niwa
 from .cli import main
