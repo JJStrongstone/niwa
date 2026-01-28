@@ -5,7 +5,7 @@ A zen garden for your plans and specs. Multiple LLM agents can collaboratively
 edit markdown documents with automatic conflict detection and resolution.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 from .cli import Niwa, ConflictType, ConflictAnalysis
 
