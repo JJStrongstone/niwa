@@ -3,9 +3,10 @@
 **Async conflict-aware spec/planning, for me, you and your LLM/agent**
 
 ```bash
-pip install niwa
+# Recommended: installs CLI globally
+pipx install niwa
 # or
-uv pip install niwa
+uv tool install niwa
 ```
 
 Niwa (庭, "garden") is a CLI tool that enables multiple LLM agents to collaboratively edit markdown documents with automatic conflict detection and resolution. Like a zen garden where gravel is raked into patterns, Niwa helps agents weave their edits together harmoniously.
@@ -27,8 +28,14 @@ Built on LMDB for high-performance concurrent access, with full GitHub Flavored 
 ## Installation
 
 ```bash
-# From PyPI
-pip install niwa
+# Recommended: install as global CLI tool
+pipx install niwa
+# or with uv
+uv tool install niwa
+
+# Alternative: install in a virtual environment
+uv venv && source .venv/bin/activate
+uv pip install niwa
 
 # Or from source
 git clone https://github.com/secemp9/niwa
