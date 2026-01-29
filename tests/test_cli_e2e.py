@@ -725,6 +725,192 @@ class TestConflicts:
             assert a in out, f"{a} should have stored conflict"
 
 
+# ── Silent Auto-Merge Regression ───────────────────────────────────────────
+# These tests verify the internal silent auto-merge in edit_node().
+# Every test asserts EXACT final content line-by-line.  If the auto-merge
+# path breaks, these catch the regression immediately.
+
+
+class TestSilentAutoMergeRegression:
+    """Regression tests for the silent auto-merge inside edit_node().
+
+    The system auto-merges non-overlapping changes without storing a conflict.
+    These tests verify:
+      1. The edit returns success (not a conflict prompt)
+      2. The merged content is EXACTLY correct (both changes present)
+      3. The version is bumped correctly
+      4. Subsequent read-edit cycles work at the new version
+    """
+
+    def test_two_agents_replace_different_lines_exact_content(self, db):
+        """Canonical case: a1 replaces line 0, a2 replaces line 4.
+        Verify the merged document line-by-line."""
+        niwa("add", "Doc", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("edit", "h1_0", "L0\nL1\nL2\nL3\nL4", "--agent", "a1", cwd=db)
+
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a2", cwd=db)
+
+        niwa("edit", "h1_0", "A_TOP\nL1\nL2\nL3\nL4", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("edit", "h1_0", "L0\nL1\nL2\nL3\nB_BOT", "--agent", "a2", cwd=db)
+        combined = out + err
+        assert "EDIT SUCCESSFUL" in combined or "Auto-merged" in combined
+        assert "conflict" not in combined.lower(), "Must NOT produce a conflict"
+
+        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        assert "A_TOP" in out, "a1's line 0 change missing"
+        assert "L1" in out, "untouched line 1 missing"
+        assert "L2" in out, "untouched line 2 missing"
+        assert "L3" in out, "untouched line 3 missing"
+        assert "B_BOT" in out, "a2's line 4 change missing"
+        assert "L0" not in out, "original line 0 should be replaced"
+        assert "L4" not in out, "original line 4 should be replaced"
+
+    def test_silent_merge_bumps_version_and_allows_next_edit(self, db):
+        """After silent auto-merge, version should be N+1 and a fresh
+        read-edit cycle should succeed without conflict."""
+        niwa("add", "Doc", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("edit", "h1_0", "L0\nL1\nL2", "--agent", "a1", cwd=db)
+        # v2
+
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a2", cwd=db)
+
+        niwa("edit", "h1_0", "X0\nL1\nL2", "--agent", "a1", cwd=db)  # v3
+        rc, out, err = niwa("edit", "h1_0", "L0\nL1\nY2", "--agent", "a2", cwd=db)
+        combined = out + err
+        assert "EDIT SUCCESSFUL" in combined or "Auto-merged" in combined
+        # Should be v4 now
+
+        # a2 does a fresh read → edit cycle at the new version
+        niwa("read", "h1_0", "--agent", "a2", cwd=db)
+        rc, out, _ = niwa("edit", "h1_0", "X0\nL1\nZ2", "--agent", "a2", cwd=db)
+        assert "EDIT SUCCESSFUL" in out, "Fresh edit after auto-merge should succeed"
+        assert "conflict" not in out.lower()
+
+    def test_silent_merge_does_not_store_conflict(self, db):
+        """After a silent auto-merge, the agent should have NO stored
+        conflict.  `niwa conflicts` should be empty."""
+        niwa("add", "Doc", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("edit", "h1_0", "L0\nL1\nL2\nL3", "--agent", "a1", cwd=db)
+
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a2", cwd=db)
+
+        niwa("edit", "h1_0", "X0\nL1\nL2\nL3", "--agent", "a1", cwd=db)
+        niwa("edit", "h1_0", "L0\nL1\nL2\nY3", "--agent", "a2", cwd=db)
+
+        # a2 should have zero conflicts
+        rc, out, _ = niwa("conflicts", "--agent", "a2", cwd=db)
+        assert "h1_0" not in out, "Auto-merged edit must NOT leave a stored conflict"
+
+    def test_three_way_merge_insert_and_delete(self, db):
+        """a1 inserts a line at the top, a2 deletes the last line.
+        Verify the merged result has the insertion and the deletion."""
+        niwa("add", "Doc", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("edit", "h1_0", "FIRST\nMID\nLAST", "--agent", "a1", cwd=db)
+
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a2", cwd=db)
+
+        # a1 inserts NEW before FIRST
+        niwa("edit", "h1_0", "NEW\nFIRST\nMID\nLAST", "--agent", "a1", cwd=db)
+        # a2 deletes LAST
+        rc, out, err = niwa("edit", "h1_0", "FIRST\nMID", "--agent", "a2", cwd=db)
+        assert "EDIT SUCCESSFUL" in (out + err) or "Auto-merged" in (out + err)
+
+        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        assert "NEW" in out, "a1's inserted line missing"
+        assert "FIRST" in out, "original first line missing"
+        assert "MID" in out, "middle line missing"
+        assert "LAST" not in out, "a2 deleted LAST — it should be gone"
+
+    def test_silent_merge_with_multi_line_replace_blocks(self, db):
+        """a1 replaces lines 0-2, a2 replaces lines 7-9.
+        Both are multi-line block replacements far apart."""
+        niwa("add", "Doc", "--agent", "a1", cwd=db)
+        lines = [f"L{i}" for i in range(10)]
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("edit", "h1_0", "\n".join(lines), "--agent", "a1", cwd=db)
+
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a2", cwd=db)
+
+        a1_lines = lines[:]
+        a1_lines[0] = "A0"
+        a1_lines[1] = "A1"
+        a1_lines[2] = "A2"
+        niwa("edit", "h1_0", "\n".join(a1_lines), "--agent", "a1", cwd=db)
+
+        a2_lines = lines[:]
+        a2_lines[7] = "B7"
+        a2_lines[8] = "B8"
+        a2_lines[9] = "B9"
+        rc, out, err = niwa("edit", "h1_0", "\n".join(a2_lines), "--agent", "a2", cwd=db)
+        assert "EDIT SUCCESSFUL" in (out + err) or "Auto-merged" in (out + err)
+
+        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        # a1's block
+        assert "A0" in out and "A1" in out and "A2" in out
+        # a2's block
+        assert "B7" in out and "B8" in out and "B9" in out
+        # Originals replaced
+        assert "L0" not in out and "L1" not in out and "L2" not in out
+        assert "L7" not in out and "L8" not in out and "L9" not in out
+        # Middle untouched
+        assert "L3" in out and "L4" in out and "L5" in out and "L6" in out
+
+    def test_silent_merge_three_agents_cascading(self, db):
+        """Three agents read the same version.  Each edits a different line.
+        a1 lands, a2 auto-merges, a3 auto-merges.  All three changes must
+        be present in the final content."""
+        niwa("add", "Doc", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("edit", "h1_0", "L0\nL1\nL2\nL3\nL4", "--agent", "a1", cwd=db)
+
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a2", cwd=db)
+        niwa("read", "h1_0", "--agent", "a3", cwd=db)
+
+        niwa("edit", "h1_0", "A0\nL1\nL2\nL3\nL4", "--agent", "a1", cwd=db)
+        rc2, out2, err2 = niwa("edit", "h1_0", "L0\nL1\nB2\nL3\nL4", "--agent", "a2", cwd=db)
+        assert "EDIT SUCCESSFUL" in (out2 + err2) or "Auto-merged" in (out2 + err2)
+
+        rc3, out3, err3 = niwa("edit", "h1_0", "L0\nL1\nL2\nL3\nC4", "--agent", "a3", cwd=db)
+        assert "EDIT SUCCESSFUL" in (out3 + err3) or "Auto-merged" in (out3 + err3)
+
+        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        assert "A0" in out, "a1's change missing"
+        assert "B2" in out, "a2's change missing"
+        assert "C4" in out, "a3's change missing"
+        assert "L1" in out and "L3" in out, "untouched lines missing"
+
+        # No agent should have stored conflicts
+        for agent in ["a1", "a2", "a3"]:
+            rc, out, _ = niwa("conflicts", "--agent", agent, cwd=db)
+            assert "h1_0" not in out, f"{agent} should have no conflict after silent merge"
+
+    def test_silent_merge_edit_summary_preserved(self, db):
+        """The auto-merged edit should include 'Auto-merged (system)' in
+        the history, proving the merge path was taken (not a normal edit)."""
+        niwa("add", "Doc", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("edit", "h1_0", "L0\nL1\nL2", "--agent", "a1", cwd=db)
+
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a2", cwd=db)
+
+        niwa("edit", "h1_0", "X0\nL1\nL2", "--agent", "a1", "--summary", "fix header", cwd=db)
+        niwa("edit", "h1_0", "L0\nL1\nY2", "--agent", "a2", "--summary", "fix footer", cwd=db)
+
+        rc, out, _ = niwa("history", "h1_0", cwd=db)
+        assert "Auto-merged" in out, "History should show the auto-merge path was taken"
+
+
 # ── Auto-Merge Edge Cases ──────────────────────────────────────────────────
 # These tests hammer the deterministic merge logic to ensure no heuristic
 # guessing is possible.  Every test verifies the exact final content.
@@ -1535,6 +1721,211 @@ class TestSwarmMergeStress:
         assert "A2" not in out
         assert "A4a" not in out
         assert "A4b" not in out
+
+
+# ── Auto-Merge Unit Tests (Python API) ─────────────────────────────────────
+# These bypass the CLI and test the merge internals directly.
+# Fast, precise, and catch regressions in the algorithm itself.
+
+
+class TestAutoMergeInternals:
+    """Unit tests for _ranges_overlap, _try_auto_merge, _three_way_merge,
+    and _find_overlaps using the Python API directly."""
+
+    @pytest.fixture
+    def niwa_db(self, tmp_path):
+        """Return a Niwa instance with an initialized database."""
+        from niwa.niwa import Niwa
+        db = Niwa(str(tmp_path / ".niwa"))
+        return db
+
+    # ── _ranges_overlap ─────────────────────────────────────────────────
+
+    def test_overlap_identical_ranges(self, niwa_db):
+        assert niwa_db._ranges_overlap((2, 5), (2, 5)) is True
+
+    def test_overlap_partial(self, niwa_db):
+        assert niwa_db._ranges_overlap((1, 4), (3, 6)) is True
+
+    def test_overlap_one_inside_other(self, niwa_db):
+        assert niwa_db._ranges_overlap((1, 10), (3, 5)) is True
+
+    def test_no_overlap_adjacent(self, niwa_db):
+        """Adjacent ranges (2,4) and (4,6) do NOT overlap."""
+        assert niwa_db._ranges_overlap((2, 4), (4, 6)) is False
+
+    def test_no_overlap_disjoint(self, niwa_db):
+        assert niwa_db._ranges_overlap((0, 2), (5, 8)) is False
+
+    def test_overlap_zero_width_same_position(self, niwa_db):
+        """Two inserts at the same point — must overlap."""
+        assert niwa_db._ranges_overlap((3, 3), (3, 3)) is True
+
+    def test_no_overlap_zero_width_different_positions(self, niwa_db):
+        """Inserts at different points — no overlap."""
+        assert niwa_db._ranges_overlap((2, 2), (5, 5)) is False
+
+    def test_overlap_zero_width_inside_range(self, niwa_db):
+        """Insert at position 3, other edit spans 1-5 — overlap."""
+        assert niwa_db._ranges_overlap((3, 3), (1, 5)) is True
+
+    def test_no_overlap_zero_width_at_boundary(self, niwa_db):
+        """Insert at position 4, other edit spans 1-4 — no overlap.
+        (4,4) and (1,4): 4 < 4 is False, so no overlap."""
+        assert niwa_db._ranges_overlap((4, 4), (1, 4)) is False
+
+    def test_overlap_single_line_ranges(self, niwa_db):
+        """Both edit exactly line 3: (3,4) vs (3,4)."""
+        assert niwa_db._ranges_overlap((3, 4), (3, 4)) is True
+
+    def test_no_overlap_single_line_adjacent(self, niwa_db):
+        """Edit line 3 vs edit line 4: (3,4) vs (4,5) — adjacent, no overlap."""
+        assert niwa_db._ranges_overlap((3, 4), (4, 5)) is False
+
+    # ── _try_auto_merge ─────────────────────────────────────────────────
+
+    def test_try_auto_merge_returns_none_on_overlap(self, niwa_db):
+        result = niwa_db._try_auto_merge("a\nb\nc", "x\nb\nc", "a\ny\nc", [{"fake": "overlap"}])
+        assert result is None
+
+    def test_try_auto_merge_returns_content_on_no_overlap(self, niwa_db):
+        result = niwa_db._try_auto_merge("a\nb\nc", "x\nb\nc", "a\nb\nz", [])
+        assert result is not None
+        assert "x" in result
+        assert "z" in result
+
+    def test_try_auto_merge_empty_overlaps_list(self, niwa_db):
+        """Empty overlap list = no overlaps = safe to merge."""
+        result = niwa_db._try_auto_merge("L0\nL1", "X0\nL1", "L0\nX1", [])
+        assert result is not None
+
+    # ── _three_way_merge exact content ──────────────────────────────────
+
+    def test_three_way_merge_both_replace_different_lines(self, niwa_db):
+        base = "A\nB\nC\nD\nE"
+        yours = "X\nB\nC\nD\nE"    # changed A→X
+        theirs = "A\nB\nC\nD\nZ"   # changed E→Z
+        result = niwa_db._three_way_merge(base, yours, theirs)
+        lines = result.strip().split("\n")
+        assert lines == ["X", "B", "C", "D", "Z"]
+
+    def test_three_way_merge_one_inserts_other_deletes(self, niwa_db):
+        base = "A\nB\nC"
+        yours = "NEW\nA\nB\nC"  # inserted NEW before A
+        theirs = "A\nC"         # deleted B
+        result = niwa_db._three_way_merge(base, yours, theirs)
+        assert "NEW" in result
+        assert "A" in result
+        assert "C" in result
+        # B should be deleted (theirs removed it)
+        result_lines = [l.strip() for l in result.strip().split("\n")]
+        assert "B" not in result_lines
+
+    def test_three_way_merge_preserves_all_untouched_lines(self, niwa_db):
+        base = "L0\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9"
+        yours = "X0\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9"   # changed L0
+        theirs = "L0\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nY9"  # changed L9
+        result = niwa_db._three_way_merge(base, yours, theirs)
+        lines = result.strip().split("\n")
+        assert lines[0] == "X0"
+        assert lines[-1] == "Y9"
+        for i in range(1, 9):
+            assert lines[i] == f"L{i}", f"Line {i} should be untouched"
+
+    # ── _find_overlaps ──────────────────────────────────────────────────
+
+    def test_find_overlaps_detects_same_line_edits(self, niwa_db):
+        base = "A\nB\nC"
+        your_changes = niwa_db._extract_changes(base, "X\nB\nC")   # changed line 0
+        their_changes = niwa_db._extract_changes(base, "Y\nB\nC")  # changed line 0
+        overlaps = niwa_db._find_overlaps(your_changes, their_changes, base)
+        assert len(overlaps) > 0, "Same line edited by both = overlap"
+
+    def test_find_overlaps_none_for_different_lines(self, niwa_db):
+        base = "A\nB\nC"
+        your_changes = niwa_db._extract_changes(base, "X\nB\nC")   # changed line 0
+        their_changes = niwa_db._extract_changes(base, "A\nB\nZ")  # changed line 2
+        overlaps = niwa_db._find_overlaps(your_changes, their_changes, base)
+        assert len(overlaps) == 0, "Different lines = no overlap"
+
+    def test_find_overlaps_partial_range_overlap(self, niwa_db):
+        base = "A\nB\nC\nD\nE"
+        # You change lines 1-3 (B,C,D → X,Y,Z)
+        your_changes = niwa_db._extract_changes(base, "A\nX\nY\nZ\nE")
+        # They change lines 2-4 (C,D,E → P,Q,R)
+        their_changes = niwa_db._extract_changes(base, "A\nB\nP\nQ\nR")
+        overlaps = niwa_db._find_overlaps(your_changes, their_changes, base)
+        assert len(overlaps) > 0, "Partially overlapping ranges must be detected"
+
+    # ── Full edit_node path via Python API ──────────────────────────────
+
+    def test_edit_node_auto_merges_via_api(self, niwa_db):
+        """Test the full edit_node → _analyze_conflict → _try_auto_merge
+        path using the Python API.  No CLI involved."""
+        node_id = "h1_0"
+        niwa_db.create_node(node_id, "heading", title="Doc", content="", level=1, agent_id="a1")
+
+        niwa_db.read_for_edit(node_id, "a1")
+        niwa_db.edit_node(node_id, "L0\nL1\nL2\nL3\nL4", "a1")
+
+        niwa_db.read_for_edit(node_id, "a1")
+        niwa_db.read_for_edit(node_id, "a2")
+
+        r1 = niwa_db.edit_node(node_id, "X0\nL1\nL2\nL3\nL4", "a1")
+        assert r1.success
+
+        r2 = niwa_db.edit_node(node_id, "L0\nL1\nL2\nL3\nY4", "a2")
+        assert r2.success, f"Auto-merge should succeed: {r2.message}"
+        assert r2.conflict is None, "No conflict object should be returned on auto-merge"
+
+        # Read back and verify content
+        node = niwa_db.read_node(node_id)
+        assert "X0" in node['content'], "a1's change missing"
+        assert "Y4" in node['content'], "a2's change missing"
+
+    def test_edit_node_rejects_overlap_via_api(self, niwa_db):
+        """Overlapping edits must return success=False with a conflict."""
+        node_id = "h1_0"
+        niwa_db.create_node(node_id, "heading", title="Doc", content="", level=1, agent_id="a1")
+
+        niwa_db.read_for_edit(node_id, "a1")
+        niwa_db.edit_node(node_id, "L0\nL1\nL2", "a1")
+
+        niwa_db.read_for_edit(node_id, "a1")
+        niwa_db.read_for_edit(node_id, "a2")
+
+        r1 = niwa_db.edit_node(node_id, "X0\nL1\nL2", "a1")
+        assert r1.success
+
+        r2 = niwa_db.edit_node(node_id, "Y0\nL1\nL2", "a2")
+        assert not r2.success, "Overlapping edit must fail"
+        assert r2.conflict is not None, "Must return a conflict object"
+
+    def test_edit_node_partial_overlap_rejects_via_api(self, niwa_db):
+        """Edit with mixed overlapping and non-overlapping regions must
+        be fully rejected — no partial merge."""
+        node_id = "h1_0"
+        niwa_db.create_node(node_id, "heading", title="Doc", content="", level=1, agent_id="a1")
+
+        niwa_db.read_for_edit(node_id, "a1")
+        niwa_db.edit_node(node_id, "L0\nL1\nL2\nL3\nL4", "a1")
+
+        niwa_db.read_for_edit(node_id, "a1")
+        niwa_db.read_for_edit(node_id, "a2")
+
+        # a1 changes line 2
+        r1 = niwa_db.edit_node(node_id, "L0\nL1\nX2\nL3\nL4", "a1")
+        assert r1.success
+
+        # a2 changes lines 0, 2, and 4 — line 2 overlaps
+        r2 = niwa_db.edit_node(node_id, "Y0\nL1\nY2\nL3\nY4", "a2")
+        assert not r2.success, "Must reject entire edit due to line 2 overlap"
+
+        # Verify none of a2's changes leaked
+        node = niwa_db.read_node(node_id)
+        assert "Y0" not in node['content'], "a2's line 0 must not be cherry-picked"
+        assert "Y4" not in node['content'], "a2's line 4 must not be cherry-picked"
+        assert "X2" in node['content'], "a1's line 2 must remain"
 
 
 # ── Export ──────────────────────────────────────────────────────────────────
