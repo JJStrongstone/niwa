@@ -8,6 +8,7 @@ from datetime import datetime
 
 from .command import print_command_help
 from .core import LLM_SYSTEM_PROMPT, handle_hook_event, print_error, setup_claude_hooks
+from .models import ConflictAnalysis, ConflictType
 from .niwa import Niwa
 
 
@@ -55,8 +56,6 @@ examples:
     parser.add_argument('args', nargs='*', help='Command arguments')
     parser.add_argument('--agent', default='default_agent', help='Agent ID (use a unique name!)')
     parser.add_argument('--summary', default=None, help='Edit summary (helps with conflict resolution)')
-    parser.add_argument('--strategy', default='prompt', choices=['prompt', 'auto'],
-                       help='Conflict resolution strategy: prompt (default), auto')
     parser.add_argument('--file', default=None, help='Read content from file instead of command line (avoids escaping issues)')
     parser.add_argument('--stdin', action='store_true', help='Read content from stdin (for piping)')
     parser.add_argument('--case-sensitive', action='store_true', help='Case-sensitive search')
@@ -508,8 +507,7 @@ NEXT: To edit this node, run:
                 return
 
             result = db.edit_node(
-                node_id, content, args.agent, args.summary,
-                resolution_strategy=args.strategy
+                node_id, content, args.agent, args.summary
             )
 
             if result.success:
@@ -654,9 +652,37 @@ NEXT: To edit this node, run:
 """)
                 return
 
+            # Look up the stored conflict for this agent+node so ACCEPT_YOURS
+            # and ACCEPT_AUTO_MERGE have access to the conflict data.
+            stored_conflict = None
+            stored_conflicts = db.get_pending_conflicts(args.agent)
+            for sc in stored_conflicts:
+                if sc.get('node_id') == node_id:
+                    stored_conflict = ConflictAnalysis(
+                        conflict_type=ConflictType.TRUE_CONFLICT,
+                        node_id=sc['node_id'],
+                        node_title=sc.get('node_title', ''),
+                        your_base_version=sc.get('your_base_version', 0),
+                        current_version=sc.get('current_version', 0),
+                        concurrent_edits_count=0,
+                        original_content='',
+                        your_content=sc.get('your_content', ''),
+                        current_content=sc.get('current_content', ''),
+                        your_changes=[],
+                        their_changes=[],
+                        overlapping_regions=[],
+                        your_agent_id=args.agent,
+                        other_agents=[],
+                        their_edit_summaries=[],
+                        auto_merge_possible=sc.get('auto_merge_possible', False),
+                        auto_merged_content=sc.get('auto_merged_content'),
+                    )
+                    break
+
             result = db.resolve_conflict(
                 node_id, resolution, args.agent,
-                manual_content=manual_content
+                manual_content=manual_content,
+                conflict=stored_conflict,
             )
 
             if result.success:

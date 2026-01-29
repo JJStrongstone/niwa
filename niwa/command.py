@@ -189,8 +189,10 @@ COMMAND_HELP = {
 ║   --file <path>     Read content from file (avoids escaping!)                ║
 ║   --stdin           Read content from stdin (for piping)                     ║
 ║   --summary "..."   Brief description (helps with conflict resolution)       ║
-║   --strategy prompt (default) Return conflict for you to resolve             ║
-║   --strategy auto   Auto-merge if possible, else return conflict             ║
+║                                                                              ║
+║ CONFLICT HANDLING:                                                           ║
+║   The system auto-merges when changes are in different parts of the doc.     ║
+║   All other conflicts require your explicit resolution via niwa resolve.     ║
 ║                                                                              ║
 ║ OUTCOMES:                                                                    ║
 ║   SUCCESS: "Edit applied. Version: N -> N+1"                                 ║

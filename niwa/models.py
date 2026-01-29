@@ -52,10 +52,9 @@ class ConflictAnalysis:
     other_agents: List[str]    # Who else edited
     their_edit_summaries: List[str]  # Their stated intents
 
-    # Auto-merge attempt (if compatible)
+    # Auto-merge (only set when changes are in completely different parts)
     auto_merge_possible: bool
     auto_merged_content: Optional[str] = None
-    auto_merge_confidence: float = 0.0
 
     def to_llm_prompt(self) -> str:
         """Generate a structured prompt for LLM to resolve the conflict."""
@@ -112,8 +111,8 @@ class ConflictAnalysis:
 
 """
 
-        if self.auto_merge_possible:
-            prompt += f"""### AUTO-MERGE SUGGESTION (confidence: {self.auto_merge_confidence:.0%})
+        if self.auto_merge_possible and self.auto_merged_content:
+            prompt += f"""### AUTO-MERGE SUGGESTION
 ```
 {self.auto_merged_content}
 ```

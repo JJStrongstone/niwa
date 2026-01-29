@@ -234,19 +234,20 @@ class Niwa:
         new_content: str,
         agent_id: str,
         edit_summary: Optional[str] = None,
-        resolution_strategy: str = "prompt",  # prompt, auto
     ) -> EditResult:
         """
         Edit a node with intelligent conflict detection.
+
+        When a conflict is detected, the system automatically merges if the
+        changes are in completely different parts of the document (confidence
+        >= 0.95). All other conflicts require explicit agent resolution.
+        Agents have no control over when auto-merge fires — the system decides.
 
         Args:
             node_id: Node to edit
             new_content: New content
             agent_id: Who is editing
             edit_summary: Brief description of what this edit does (helps with conflict resolution)
-            resolution_strategy:
-                - "prompt": Return conflict for LLM resolution
-                - "auto": Auto-merge if possible, else return conflict
         """
         with self.env.begin(write=True) as txn:
             # Get current node state
@@ -294,20 +295,23 @@ class Niwa:
                 your_agent_id=agent_id,
             )
 
-            # Handle based on strategy
-            if resolution_strategy == "auto" and conflict.auto_merge_possible:
+            # System auto-merges ONLY when changes are in completely different
+            # parts of the document (non-overlapping line ranges). This is
+            # deterministic — difflib tells us exactly which lines changed.
+            # Any overlap at all requires explicit agent resolution.
+            if conflict.auto_merge_possible:
                 return self._apply_edit(
                     txn, node, conflict.auto_merged_content, agent_id,
-                    f"Auto-merged: {edit_summary}"
+                    f"Auto-merged (system): {edit_summary}"
                 )
 
-            else:  # "prompt" or auto-merge not possible
-                return EditResult(
-                    success=False,
-                    node_id=node_id,
-                    message="Conflict detected - resolution required",
-                    conflict=conflict,
-                )
+            # All other conflicts require agent resolution
+            return EditResult(
+                success=False,
+                node_id=node_id,
+                message="Conflict detected - resolution required",
+                conflict=conflict,
+            )
 
     def _apply_edit(
         self,
@@ -389,14 +393,13 @@ class Niwa:
         # Find overlapping regions
         overlaps = self._find_overlaps(your_changes, their_changes, base_content)
 
-        # Determine conflict type and try auto-merge
-        conflict_type, auto_merged, confidence = self._classify_and_merge(
-            base_content, your_content, current_content,
-            your_changes, their_changes, overlaps
+        # Try auto-merge (only succeeds when changes are in different parts)
+        auto_merged = self._try_auto_merge(
+            base_content, your_content, current_content, overlaps
         )
 
         return ConflictAnalysis(
-            conflict_type=conflict_type,
+            conflict_type=ConflictType.COMPATIBLE if auto_merged else ConflictType.TRUE_CONFLICT,
             node_id=node['id'],
             node_title=node.get('title', '(untitled)'),
             your_base_version=base_version,
@@ -413,7 +416,6 @@ class Niwa:
             their_edit_summaries=their_summaries,
             auto_merge_possible=auto_merged is not None,
             auto_merged_content=auto_merged,
-            auto_merge_confidence=confidence,
         )
 
     def _extract_changes(self, old: str, new: str) -> List[Dict]:
@@ -474,50 +476,37 @@ class Niwa:
         return overlaps
 
     def _ranges_overlap(self, r1: Tuple[int, int], r2: Tuple[int, int]) -> bool:
-        """Check if two line ranges overlap."""
+        """Check if two line ranges overlap.
+
+        Zero-width ranges at the same position (two inserts at the same spot)
+        are considered overlapping — both agents are inserting at the same
+        point in the document, which is a conflict.
+        """
+        # Two inserts at the same position
+        if r1[0] == r1[1] and r2[0] == r2[1] and r1[0] == r2[0]:
+            return True
         return r1[0] < r2[1] and r2[0] < r1[1]
 
-    def _classify_and_merge(
+    def _try_auto_merge(
         self,
         base: str,
         yours: str,
         theirs: str,
-        your_changes: List[Dict],
-        their_changes: List[Dict],
         overlaps: List[Dict],
-    ) -> Tuple[ConflictType, Optional[str], float]:
+    ) -> Optional[str]:
         """
-        Classify conflict type and attempt auto-merge.
+        Try to auto-merge two edits. Returns merged content if changes are
+        in completely different parts of the document, None otherwise.
 
-        Returns: (conflict_type, auto_merged_content, confidence)
+        This is deterministic: either the line ranges overlap or they don't.
+        No confidence scores, no heuristics, no guessing.
         """
+        if overlaps:
+            # Any overlap = conflict. Agent must resolve.
+            return None
 
-        # No overlaps = compatible changes, can auto-merge
-        if not overlaps:
-            merged = self._three_way_merge(base, yours, theirs)
-            return (ConflictType.COMPATIBLE, merged, 0.95)
-
-        # Check if overlapping changes are identical (same edit by both)
-        identical_overlaps = all(
-            o['yours'].strip() == o['theirs'].strip()
-            for o in overlaps
-        )
-        if identical_overlaps:
-            return (ConflictType.COMPATIBLE, theirs, 1.0)
-
-        # Check if one is subset of the other
-        if yours.strip() in theirs.strip():
-            return (ConflictType.SEMANTIC_OVERLAP, theirs, 0.8)
-        if theirs.strip() in yours.strip():
-            return (ConflictType.SEMANTIC_OVERLAP, yours, 0.8)
-
-        # Try heuristic merge for simple cases
-        merged = self._attempt_heuristic_merge(base, yours, theirs, overlaps)
-        if merged:
-            return (ConflictType.SEMANTIC_OVERLAP, merged, 0.6)
-
-        # True conflict - cannot auto-resolve
-        return (ConflictType.TRUE_CONFLICT, None, 0.0)
+        # No overlapping line ranges — safe to three-way merge
+        return self._three_way_merge(base, yours, theirs)
 
     def _three_way_merge(self, base: str, yours: str, theirs: str) -> str:
         """
@@ -567,29 +556,6 @@ class Niwa:
             applied_ranges.append((i1, i2))
 
         return ''.join(result)
-
-    def _attempt_heuristic_merge(
-        self,
-        base: str,
-        yours: str,
-        theirs: str,
-        overlaps: List[Dict],
-    ) -> Optional[str]:
-        """
-        Try heuristic merges for common patterns.
-        Returns merged content if successful, None if can't merge.
-        """
-        # Heuristic 1: Both are appending to the same location
-        all_inserts = all(
-            o['your_change_type'] == 'insert' and o['their_change_type'] == 'insert'
-            for o in overlaps
-        )
-        if all_inserts:
-            # Combine both insertions
-            # This is a simplified heuristic - could be smarter
-            return theirs + "\n" + yours.replace(base, "").strip()
-
-        return None
 
     # =========================================================================
     # CONFLICT RESOLUTION
@@ -648,7 +614,7 @@ class Niwa:
                 if not conflict or not conflict.auto_merged_content:
                     return EditResult(success=False, node_id=node_id, message="No auto-merge available")
                 final_content = conflict.auto_merged_content
-                summary = f"Conflict resolved: auto-merged (confidence: {conflict.auto_merge_confidence:.0%})"
+                summary = "Conflict resolved: auto-merged (non-overlapping changes)"
 
             elif resolution == "MANUAL_MERGE":
                 if not manual_content:
