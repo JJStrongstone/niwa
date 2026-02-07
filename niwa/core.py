@@ -83,11 +83,13 @@ def get_niwa_usage_guide() -> str:
 This project uses Niwa for collaborative markdown editing with conflict detection.
 
 QUICK REFERENCE (prefix all with 'niwa'):
-  niwa tree                              # View document structure with node IDs
-  niwa read <node_id> --agent <name>     # Read node for editing (tracks version)
+  niwa tree                              # View structure with node IDs, token counts, AST
+  niwa read <node_id> --agent <name>     # Read node (progressive overview for large nodes)
+  niwa read <node_id> --all --agent <name>  # Read full content (skip overview)
+  niwa read <node_id> --section N --agent <name>  # Read specific section
+  niwa read <node_id> --lines M-N --agent <name>  # Read specific line range
   niwa edit <node_id> "content" --agent <name>  # Edit node
   niwa edit <node_id> --file <path> --agent <name>  # Edit from file (recommended)
-  niwa peek <node_id>                    # Quick view without tracking
   niwa search <query>                    # Find content by keyword
   niwa status --agent <name>             # Check your pending reads/conflicts
   niwa conflicts --agent <name>          # List unresolved conflicts
@@ -97,8 +99,8 @@ QUICK REFERENCE (prefix all with 'niwa'):
 CONFLICT RESOLUTIONS: ACCEPT_YOURS | ACCEPT_THEIRS | MANUAL_MERGE "content"
 
 WORKFLOW:
-  1. Use `niwa tree` to find node IDs
-  2. Use `niwa read` before editing (registers your base version)
+  1. Use `niwa tree` to find node IDs (shows token counts and AST summary per node)
+  2. Use `niwa read` before editing (large nodes show structure first; use --all for full content)
   3. Use `niwa edit` with same --agent name
   4. If CONFLICT: use `niwa resolve` with one of the resolution options
   5. Use `niwa export` to get the final markdown
@@ -403,6 +405,10 @@ try to edit the same section simultaneously.
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ niwa read <node_id> --agent <your_agent_name>               │
 │                                                                             │
+│ For large nodes, this shows a structural overview first (sections,          │
+│ paragraphs, code blocks). Use --all for full content, --section N for a     │
+│ specific section, or --lines M-N for a line range.                          │
+│                                                                             │
 │ This outputs the current version number. REMEMBER IT!                       │
 │ The system tracks that you read version N.                                  │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -461,11 +467,10 @@ try to edit the same section simultaneously.
 ║ check         ║ Verify database health and state                             ║
 ╠═══════════════╬══════════════════════════════════════════════════════════════╣
 ║ BROWSE:       ║                                                              ║
-║ tree          ║ Show document structure with all node IDs                    ║
-║ peek <id>     ║ Quick view of a node (doesn't track read version)            ║
+║ tree          ║ Show structure with node IDs, token counts, and AST summary ║
 ╠═══════════════╬══════════════════════════════════════════════════════════════╣
 ║ EDIT:         ║                                                              ║
-║ read <id>     ║ Read for editing (TRACKS your read version for conflicts)    ║
+║ read <id>     ║ Read for editing (progressive overview for large nodes)      ║
 ║ edit <id> ... ║ Edit a node (use --file for complex content!)                ║
 ║ resolve ...   ║ Resolve a conflict after edit fails                          ║
 ║ title <id>    ║ Update a node's title                                        ║
@@ -494,11 +499,14 @@ try to edit the same section simultaneously.
 Run `niwa tree` to see all nodes:
 
 ```
-[root] v1 "Document" (by system)
-  [h1_0] v1 "Main Title" (by system)
-    [h2_1] v3 "Section 1" (by agent_A)      ← node_id is "h2_1", version is 3
-    [h2_2] v1 "Section 2" (by system)
-      [h3_3] v2 "Subsection 2.1" (by agent_B)
+[root] v1 "Document" (by system) ~50 tok
+  [h1_0] v1 "Main Title" (by system) ~120 tok
+    | 2¶
+    [h2_1] v3 "Section 1" (by agent_A) ~500 tok    ← node_id is "h2_1"
+      | 3¶ · 1 code(python) · 1 table
+    [h2_2] v1 "Section 2" (by system) ~80 tok
+      [h3_3] v2 "Subsection 2.1" (by agent_B) ~200 tok
+        | 1¶ · 1 code(bash)
 ```
 
 Node IDs follow the pattern: h{level}_{index}
@@ -720,7 +728,6 @@ ERROR_PROMPTS = {
 ║                                                                              ║
 ║ BROWSE:                                                                      ║
 ║   tree      - Show document structure                                        ║
-║   peek      - Quick view (no edit tracking)                                  ║
 ║                                                                              ║
 ║ EDIT:                                                                        ║
 ║   read      - Read for editing (tracks version)                              ║

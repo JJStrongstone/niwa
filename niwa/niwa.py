@@ -23,6 +23,7 @@ import re
 import uuid
 
 from .models import ConflictAnalysis, ConflictType, EditResult
+from .tokens import count_tokens
 
 
 class Niwa:
@@ -36,9 +37,18 @@ class Niwa:
     - ACID transactions
     """
 
+    PROGRESSIVE_READ_THRESHOLD = 1000  # tokens — above this, show structure first
+
     def __init__(self, db_path: str = ".niwa"):
         self.db_path = Path(db_path)
         self.db_path.mkdir(exist_ok=True)
+
+        # Reusable markdown-it parser for content structure analysis
+        self._md_parser = MarkdownIt("gfm-like")
+        self._md_parser.use(front_matter_plugin)
+        self._md_parser.use(footnote_plugin)
+        self._md_parser.use(deflist_plugin)
+        self._md_parser.use(tasklists_plugin)
 
         # LMDB environment - 1GB max size, adjust as needed
         self.env = lmdb.open(
@@ -624,6 +634,147 @@ class Niwa:
             return self._apply_edit(txn, node, final_content, agent_id, summary)
 
     # =========================================================================
+    # DELETE AND MOVE OPERATIONS
+    # =========================================================================
+
+    def delete_node(self, node_id: str, agent_id: str) -> EditResult:
+        """Delete a node. Children are reparented to the deleted node's parent."""
+        if node_id == 'root':
+            return EditResult(success=False, node_id=node_id, message="Cannot delete root node")
+
+        with self.env.begin(write=True) as txn:
+            node_data = txn.get(node_id.encode(), db=self.nodes_db)
+            if not node_data:
+                return EditResult(success=False, node_id=node_id, message=f"Node {node_id} not found")
+
+            node = self._deserialize(node_data)
+            parent_id = node.get('parent_id')
+            children = node.get('children', [])
+
+            # Reparent children to this node's parent
+            for child_id in children:
+                child_data = txn.get(child_id.encode(), db=self.nodes_db)
+                if child_data:
+                    child = self._deserialize(child_data)
+                    child['parent_id'] = parent_id
+                    txn.put(child_id.encode(), self._serialize(child), db=self.nodes_db)
+
+            # Update parent's children list: replace this node with its children
+            if parent_id:
+                parent_data = txn.get(parent_id.encode(), db=self.nodes_db)
+                if parent_data:
+                    parent = self._deserialize(parent_data)
+                    idx = parent['children'].index(node_id) if node_id in parent['children'] else -1
+                    if idx >= 0:
+                        parent['children'] = parent['children'][:idx] + children + parent['children'][idx+1:]
+                    else:
+                        parent['children'] = [c for c in parent['children'] if c != node_id]
+                        parent['children'].extend(children)
+                    txn.put(parent_id.encode(), self._serialize(parent), db=self.nodes_db)
+
+            # Delete the node
+            txn.delete(node_id.encode(), db=self.nodes_db)
+
+            # Clean up pending reads for this node
+            cursor = txn.cursor(db=self.pending_db)
+            keys_to_delete = []
+            for key, value in cursor:
+                if key.decode().startswith(f"{node_id}:"):
+                    keys_to_delete.append(key)
+            for key in keys_to_delete:
+                txn.delete(key, db=self.pending_db)
+
+            child_msg = f" {len(children)} child(ren) reparented to {parent_id}." if children else ""
+            return EditResult(
+                success=True,
+                node_id=node_id,
+                message=f"Deleted {node_id}.{child_msg}"
+            )
+
+    def move_node(self, node_id: str, new_parent_id: str, agent_id: str) -> EditResult:
+        """Move a node under a new parent. Updates levels recursively."""
+        if node_id == 'root':
+            return EditResult(success=False, node_id=node_id, message="Cannot move root node")
+        if node_id == new_parent_id:
+            return EditResult(success=False, node_id=node_id, message="Cannot move node under itself")
+
+        with self.env.begin(write=True) as txn:
+            node_data = txn.get(node_id.encode(), db=self.nodes_db)
+            if not node_data:
+                return EditResult(success=False, node_id=node_id, message=f"Node {node_id} not found")
+
+            new_parent_data = txn.get(new_parent_id.encode(), db=self.nodes_db)
+            if not new_parent_data:
+                return EditResult(success=False, node_id=node_id, message=f"Parent node {new_parent_id} not found")
+
+            node = self._deserialize(node_data)
+            new_parent = self._deserialize(new_parent_data)
+            old_parent_id = node.get('parent_id')
+
+            if old_parent_id == new_parent_id:
+                return EditResult(success=False, node_id=node_id, message=f"Node {node_id} is already under {new_parent_id}")
+
+            # Cycle check: new_parent can't be a descendant of node
+            if self._is_descendant(txn, new_parent_id, node_id):
+                return EditResult(success=False, node_id=node_id, message=f"Cannot move: {new_parent_id} is a descendant of {node_id}")
+
+            # Remove from old parent
+            if old_parent_id:
+                old_parent_data = txn.get(old_parent_id.encode(), db=self.nodes_db)
+                if old_parent_data:
+                    old_parent = self._deserialize(old_parent_data)
+                    old_parent['children'] = [c for c in old_parent['children'] if c != node_id]
+                    txn.put(old_parent_id.encode(), self._serialize(old_parent), db=self.nodes_db)
+
+            # Add to new parent
+            if node_id not in new_parent['children']:
+                new_parent['children'].append(node_id)
+            txn.put(new_parent_id.encode(), self._serialize(new_parent), db=self.nodes_db)
+
+            # Update node's parent_id and level
+            node['parent_id'] = new_parent_id
+            new_level = new_parent.get('level', 0) + 1
+            node['level'] = new_level
+            node['updated_at'] = time.time()
+            txn.put(node_id.encode(), self._serialize(node), db=self.nodes_db)
+
+            # Recursively update children's levels
+            self._update_children_levels(txn, node_id, new_level)
+
+            return EditResult(
+                success=True,
+                node_id=node_id,
+                message=f"Moved {node_id} from {old_parent_id} to {new_parent_id}"
+            )
+
+    def _is_descendant(self, txn, potential_descendant: str, ancestor: str) -> bool:
+        """Check if potential_descendant is a descendant of ancestor."""
+        node_data = txn.get(ancestor.encode(), db=self.nodes_db)
+        if not node_data:
+            return False
+        node = self._deserialize(node_data)
+        for child_id in node.get('children', []):
+            if child_id == potential_descendant:
+                return True
+            if self._is_descendant(txn, potential_descendant, child_id):
+                return True
+        return False
+
+    def _update_children_levels(self, txn, parent_id: str, parent_level: int):
+        """Recursively update children's levels after a move."""
+        parent_data = txn.get(parent_id.encode(), db=self.nodes_db)
+        if not parent_data:
+            return
+        parent = self._deserialize(parent_data)
+        for child_id in parent.get('children', []):
+            child_data = txn.get(child_id.encode(), db=self.nodes_db)
+            if child_data:
+                child = self._deserialize(child_data)
+                child['level'] = parent_level + 1
+                txn.put(child_id.encode(), self._serialize(child), db=self.nodes_db)
+                self._update_children_levels(txn, child_id, parent_level + 1)
+
+    # =========================================================================
     # TITLE AND SUMMARY UPDATES
     # =========================================================================
 
@@ -783,8 +934,141 @@ class Niwa:
     # UTILITY METHODS
     # =========================================================================
 
+    def content_structure(self, content: str) -> list:
+        """Parse content into block-level structural elements with line ranges and token counts.
+
+        Returns a list of dicts, each representing a top-level block element:
+            {'type': 'paragraph', 'lines': [1, 4], 'tokens': 120, 'preview': '...'}
+            {'type': 'code', 'lang': 'python', 'lines': [5, 20], 'tokens': 380, ...}
+        Lines are 1-indexed. 'lines' is [first_line, last_line] inclusive.
+        """
+        if not content or not content.strip():
+            return []
+
+        tokens = self._md_parser.parse(content)
+        lines = content.split('\n')
+        elements = []
+        depth = 0
+
+        for i, token in enumerate(tokens):
+            if token.nesting == 1:  # Opening tag
+                if depth == 0 and token.map:
+                    start, end = token.map  # 0-indexed, end exclusive
+                    text = '\n'.join(lines[start:end])
+                    tok_count = count_tokens(text)
+
+                    elem = {
+                        'lines': [start + 1, end],  # 1-indexed inclusive
+                        'tokens': tok_count,
+                        'preview': text[:80].replace('\n', ' ').strip(),
+                    }
+
+                    if token.type == 'paragraph_open':
+                        elem['type'] = 'paragraph'
+                    elif token.type == 'bullet_list_open':
+                        elem['type'] = 'bullet_list'
+                    elif token.type == 'ordered_list_open':
+                        elem['type'] = 'ordered_list'
+                    elif token.type == 'table_open':
+                        elem['type'] = 'table'
+                    elif token.type == 'blockquote_open':
+                        elem['type'] = 'blockquote'
+                    elif token.type == 'heading_open':
+                        elem['type'] = 'heading'
+                        elem['level'] = int(token.tag[1]) if token.tag else 0
+                        if i + 1 < len(tokens) and tokens[i + 1].type == 'inline':
+                            elem['preview'] = tokens[i + 1].content[:80]
+                    elif token.type == 'dl_open':
+                        elem['type'] = 'deflist'
+                    else:
+                        elem['type'] = token.type.replace('_open', '')
+
+                    elements.append(elem)
+                depth += 1
+
+            elif token.nesting == -1:  # Closing tag
+                depth -= 1
+
+            elif token.nesting == 0 and depth == 0:  # Self-closing at top level
+                if token.map:
+                    start, end = token.map
+                    text = '\n'.join(lines[start:end])
+                    tok_count = count_tokens(text)
+                else:
+                    continue  # Skip tokens without line mapping
+
+                elem = {
+                    'lines': [start + 1, end],
+                    'tokens': tok_count,
+                }
+
+                if token.type == 'fence':
+                    elem['type'] = 'code'
+                    elem['lang'] = token.info.strip() if token.info else ''
+                    elem['preview'] = token.content[:80].replace('\n', ' ').strip()
+                elif token.type == 'code_block':
+                    elem['type'] = 'code'
+                    elem['lang'] = ''
+                    elem['preview'] = token.content[:80].replace('\n', ' ').strip()
+                elif token.type == 'hr':
+                    elem['type'] = 'hr'
+                    elem['preview'] = '---'
+                else:
+                    elem['type'] = token.type
+                    elem['preview'] = text[:80].replace('\n', ' ').strip()
+
+                elements.append(elem)
+
+        return elements
+
+    @staticmethod
+    def _structure_summary(elements: list) -> str:
+        """Generate a compact one-line summary like '3 paragraphs · 1 code(python) · 1 table'."""
+        if not elements:
+            return "empty"
+
+        counts = {}
+        code_langs = []
+        for elem in elements:
+            t = elem['type']
+            if t == 'code':
+                lang = elem.get('lang', '')
+                if lang:
+                    code_langs.append(lang)
+                counts['code'] = counts.get('code', 0) + 1
+            elif t in ('bullet_list', 'ordered_list'):
+                counts['list'] = counts.get('list', 0) + 1
+            else:
+                counts[t] = counts.get(t, 0) + 1
+
+        parts = []
+        order = ['paragraph', 'heading', 'code', 'list', 'table', 'blockquote', 'deflist', 'hr']
+        for key in order:
+            if key not in counts:
+                continue
+            n = counts[key]
+            if key == 'paragraph':
+                parts.append(f"{n}¶")
+            elif key == 'code':
+                langs = ",".join(sorted(set(code_langs)))
+                parts.append(f"{n} code({langs})" if langs else f"{n} code")
+            elif key == 'list':
+                parts.append(f"{n} list{'s' if n > 1 else ''}")
+            elif key == 'table':
+                parts.append(f"{n} table{'s' if n > 1 else ''}")
+            elif key == 'blockquote':
+                parts.append(f"{n} quote{'s' if n > 1 else ''}")
+            elif key == 'heading':
+                parts.append(f"{n} heading{'s' if n > 1 else ''}")
+            elif key == 'deflist':
+                parts.append(f"{n} deflist{'s' if n > 1 else ''}")
+            elif key == 'hr':
+                parts.append(f"{n} hr")
+
+        return " · ".join(parts)
+
     def get_tree(self) -> str:
-        """Get document tree structure."""
+        """Get document tree structure with token counts and AST summaries."""
         output = ["# Document Structure", ""]
 
         nodes = {n['id']: n for n in self.list_nodes()}
@@ -800,42 +1084,24 @@ class Niwa:
             title = node.get('title', '(untitled)')[:40]
             version = node['version']
             agent = node.get('last_agent', '?')
-            summary_flag = "[S]" if node.get('summary') else ""
-            output.append(f"{indent}[{node_id}] v{version} \"{title}\" (by {agent}) {summary_flag}")
+            content = node.get('content', '')
+            tok = count_tokens(content)
+            tok_str = f"~{tok:,} tok" if tok > 0 else "0 tok"
+
+            output.append(f"{indent}[{node_id}] v{version} \"{title}\" (by {agent}) {tok_str}")
+
+            # Show AST summary for nodes with content
+            if content.strip():
+                elements = self.content_structure(content)
+                summary = self._structure_summary(elements)
+                if summary and summary != "empty":
+                    output.append(f"{indent}  | {summary}")
 
             for child_id in node.get('children', []):
                 render(child_id, depth + 1)
 
         for root in roots:
             render(root['id'])
-
-        return "\n".join(output)
-
-    def peek(self, node_id: str) -> str:
-        """Quick view of a node."""
-        node = self.read_node(node_id)
-        if not node:
-            return f"Node {node_id} not found"
-
-        output = [
-            f"# Node: {node_id}",
-            f"**Title**: {node.get('title', '(none)')}",
-            f"**Type**: {node['type']}, **Level**: {node['level']}",
-            f"**Version**: {node['version']} (by {node.get('last_agent', '?')})",
-            f"**Summary**: {node.get('summary') or '(none)'}",
-            "",
-            "## Content Preview",
-            "```",
-            node['content'][:500] + ('...' if len(node['content']) > 500 else ''),
-            "```",
-            "",
-            f"## Children ({len(node.get('children', []))})",
-        ]
-
-        for child_id in node.get('children', []):
-            child = self.read_node(child_id)
-            if child:
-                output.append(f"  - [{child_id}] {child.get('title', '?')}")
 
         return "\n".join(output)
 

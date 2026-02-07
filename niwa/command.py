@@ -83,46 +83,30 @@ COMMAND_HELP = {
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║ COMMAND: tree                                                                ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║ PURPOSE: Display document structure with all node IDs                        ║
+║ PURPOSE: Display document structure with node IDs, token counts, and AST     ║
 ║                                                                              ║
 ║ USAGE:                                                                       ║
 ║   niwa tree                                                  ║
 ║                                                                              ║
 ║ OUTPUT FORMAT:                                                               ║
-║   [node_id] vN "Title" (by agent_name)                                       ║
+║   [node_id] vN "Title" (by agent_name) ~500 tok                              ║
+║     | 3¶ · 1 code(python) · 1 table                                         ║
 ║                                                                              ║
-║   - node_id: Use this for read/edit/peek commands                            ║
+║   - node_id: Use this for read/edit commands                                 ║
 ║   - vN: Current version number                                               ║
 ║   - Title: First 40 chars of heading                                         ║
 ║   - by agent_name: Who last edited this node                                 ║
+║   - ~N tok: Approximate token count for the node's content                   ║
+║   - AST summary line: paragraph count, code blocks (with lang), tables, etc. ║
 ║                                                                              ║
 ║ EXAMPLE OUTPUT:                                                              ║
-║   [root] v1 "Document" (by system)                                           ║
-║     [h1_0] v1 "Introduction" (by system)                                     ║
-║     [h2_1] v3 "Chapter 1" (by agent_A)     ← edited 3 times                  ║
-║       [h3_2] v1 "Section 1.1" (by system)                                    ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-""",
-    'peek': """
-╔══════════════════════════════════════════════════════════════════════════════╗
-║ COMMAND: peek                                                                ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║ PURPOSE: Quick view of a node (does NOT track read version)                  ║
-║                                                                              ║
-║ USAGE:                                                                       ║
-║   niwa peek <node_id>                                        ║
-║                                                                              ║
-║ EXAMPLE:                                                                     ║
-║   niwa peek h2_5                                             ║
-║                                                                              ║
-║ ⚠️  WARNING:                                                                  ║
-║   This does NOT register your read for conflict detection!                   ║
-║   Use `read` instead if you plan to edit.                                    ║
-║                                                                              ║
-║ USE peek FOR:                                                                ║
-║   - Browsing without intent to edit                                          ║
-║   - Checking node metadata (title, children, etc.)                           ║
-║   - Quick content preview                                                    ║
+║   [root] v1 "Document" (by system) ~50 tok                                   ║
+║     [h1_0] v1 "Introduction" (by system) ~120 tok                            ║
+║       | 2¶                                                                   ║
+║     [h2_1] v3 "Chapter 1" (by agent_A) ~500 tok                              ║
+║       | 3¶ · 1 code(python) · 1 table                                       ║
+║       [h3_2] v1 "Section 1.1" (by system) ~80 tok                            ║
+║         | 1¶ · 1 code(bash)                                                  ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """,
     'read': """
@@ -132,10 +116,26 @@ COMMAND_HELP = {
 ║ PURPOSE: Read a node FOR EDITING (tracks your read version)                  ║
 ║                                                                              ║
 ║ USAGE:                                                                       ║
-║   niwa read <node_id> --agent <your_agent_name>              ║
+║   niwa read <node_id> --agent <name>                         ║
+║   niwa read <node_id> --all --agent <name>                   ║
+║   niwa read <node_id> --section N --agent <name>             ║
+║   niwa read <node_id> --lines M-N --agent <name>             ║
 ║                                                                              ║
-║ EXAMPLE:                                                                     ║
-║   niwa read h2_3 --agent claude_researcher                   ║
+║ PROGRESSIVE DISCLOSURE:                                                      ║
+║   For large nodes, read returns a structural overview first (sections,       ║
+║   paragraph counts, code blocks) instead of the full content. Use the        ║
+║   flags below to drill into specific parts:                                  ║
+║                                                                              ║
+║ OPTIONS:                                                                     ║
+║   --all            Read the full content (skip progressive disclosure)       ║
+║   --section N      Read a specific section by number (from overview)         ║
+║   --lines M-N      Read a specific line range                                ║
+║                                                                              ║
+║ EXAMPLES:                                                                    ║
+║   niwa read h2_3 --agent claude_1            # Overview if large             ║
+║   niwa read h2_3 --all --agent claude_1      # Full content                  ║
+║   niwa read h2_3 --section 2 --agent claude_1  # Section 2 only             ║
+║   niwa read h2_3 --lines 10-25 --agent claude_1  # Lines 10-25              ║
 ║                                                                              ║
 ║ ⚠️  IMPORTANT:                                                                ║
 ║   - ALWAYS use --agent with a unique name for your agent                     ║
@@ -502,6 +502,53 @@ COMMAND_HELP = {
 ║   - After many agents have come and gone                                     ║
 ║   - If pending_edit_count is high in `check`                                 ║
 ║   - Periodic maintenance                                                     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""",
+    'delete': """
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ COMMAND: delete                                                             ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ PURPOSE: Delete a node from the document tree                               ║
+║                                                                              ║
+║ USAGE:                                                                       ║
+║   niwa delete <node_id> --agent <name>                      ║
+║                                                                              ║
+║ WHAT HAPPENS TO CHILDREN:                                                    ║
+║   Children are reparented to the deleted node's parent.                      ║
+║   They are NOT deleted — they move up one level.                             ║
+║                                                                              ║
+║ EXAMPLES:                                                                    ║
+║   niwa delete h2_3 --agent claude_1          # Delete a section             ║
+║                                                                              ║
+║ RESTRICTIONS:                                                                ║
+║   - Cannot delete the root node                                             ║
+║                                                                              ║
+║ NOTE:                                                                        ║
+║   This is permanent. Check `niwa tree` first to confirm the node.            ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""",
+    'move': """
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ COMMAND: move                                                               ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ PURPOSE: Move a node under a different parent in the tree                    ║
+║                                                                              ║
+║ USAGE:                                                                       ║
+║   niwa move <node_id> --under <parent_id> --agent <name>    ║
+║                                                                              ║
+║ WHAT IT DOES:                                                                ║
+║   - Removes node from its current parent                                     ║
+║   - Adds it under the new parent                                             ║
+║   - Updates heading levels recursively (node + all descendants)              ║
+║                                                                              ║
+║ EXAMPLES:                                                                    ║
+║   niwa move h2_3 --under h1_0 --agent claude_1              ║
+║   niwa move h2_3 --under root --agent claude_1              ║
+║                                                                              ║
+║ RESTRICTIONS:                                                                ║
+║   - Cannot move root                                                         ║
+║   - Cannot move a node under itself                                          ║
+║   - Cannot move a node under one of its own descendants (cycle)              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """,
     'setup': """

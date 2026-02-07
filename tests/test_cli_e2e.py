@@ -128,7 +128,7 @@ class TestAdd:
         rc, out, err = niwa("add", "From File", "--agent", "a1", "--file", str(content_file), cwd=db)
         assert rc == 0
 
-        rc, out, err = niwa("peek", "h1_0", cwd=db)
+        rc, out, err = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "detailed content" in out
 
     def test_add_with_stdin(self, db):
@@ -142,7 +142,7 @@ class TestAdd:
         )
         assert result.returncode == 0
 
-        rc, out, err = niwa("peek", "h1_0", cwd=db)
+        rc, out, err = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "Piped content" in out
 
     def test_add_to_nonexistent_parent(self, db):
@@ -180,12 +180,6 @@ class TestReadEditCycle:
 
         rc, out, err = niwa("tree", cwd=db)
         assert "v2" in out
-
-    def test_peek_no_tracking(self, db):
-        niwa("add", "Section", "--agent", "a1", cwd=db)
-        rc, out, err = niwa("peek", "h1_0", cwd=db)
-        assert rc == 0
-        assert "Section" in out
 
     def test_read_nonexistent_node(self, db):
         """Agent tries to read a node that doesn't exist."""
@@ -230,7 +224,7 @@ class TestReadEditCycle:
         rc, out, err = niwa("edit", "h1_0", content, "--agent", "a1", cwd=db)
         assert rc == 0
 
-        rc, out, err = niwa("peek", "h1_0", cwd=db)
+        rc, out, err = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "hello" in out
 
     def test_edit_with_file(self, db):
@@ -244,7 +238,7 @@ class TestReadEditCycle:
         rc, out, err = niwa("edit", "h1_0", "--agent", "a1", "--file", str(content_file), cwd=db)
         assert rc == 0
 
-        rc, out, err = niwa("peek", "h1_0", cwd=db)
+        rc, out, err = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "Detailed paragraph" in out
 
     def test_edit_empty_content(self, db):
@@ -292,7 +286,7 @@ class TestConflicts:
         assert "CONFLICT RESOLVED" in out
 
         # Verify a2's version won
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "a2 version" in out
 
     def test_resolve_accept_theirs(self, db):
@@ -422,7 +416,7 @@ class TestConflicts:
         assert "CONFLICT RESOLVED" in out2
 
         # Peek to verify a2's content landed
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert rc == 0
         assert "a2 attempt" in out
 
@@ -456,7 +450,7 @@ class TestConflicts:
         assert rc == 0 or "resolve" in combined.lower()
 
         # Verify the merged content is there
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         if rc == 0 and "a1 contribution" in out and "a2 contribution" in out:
             pass  # Perfect — manual merge preserved both
 
@@ -485,7 +479,7 @@ class TestConflicts:
         assert "CONFLICT RESOLVED" in out3
 
         # Content should now be a3's
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "a3 attempt" in out
 
     def test_edit_without_read(self, db):
@@ -758,7 +752,7 @@ class TestSilentAutoMergeRegression:
         assert "EDIT SUCCESSFUL" in combined or "Auto-merged" in combined
         assert "conflict" not in combined.lower(), "Must NOT produce a conflict"
 
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "A_TOP" in out, "a1's line 0 change missing"
         assert "L1" in out, "untouched line 1 missing"
         assert "L2" in out, "untouched line 2 missing"
@@ -823,7 +817,7 @@ class TestSilentAutoMergeRegression:
         rc, out, err = niwa("edit", "h1_0", "FIRST\nMID", "--agent", "a2", cwd=db)
         assert "EDIT SUCCESSFUL" in (out + err) or "Auto-merged" in (out + err)
 
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "NEW" in out, "a1's inserted line missing"
         assert "FIRST" in out, "original first line missing"
         assert "MID" in out, "middle line missing"
@@ -853,7 +847,7 @@ class TestSilentAutoMergeRegression:
         rc, out, err = niwa("edit", "h1_0", "\n".join(a2_lines), "--agent", "a2", cwd=db)
         assert "EDIT SUCCESSFUL" in (out + err) or "Auto-merged" in (out + err)
 
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         # a1's block
         assert "A0" in out and "A1" in out and "A2" in out
         # a2's block
@@ -883,7 +877,7 @@ class TestSilentAutoMergeRegression:
         rc3, out3, err3 = niwa("edit", "h1_0", "L0\nL1\nL2\nL3\nC4", "--agent", "a3", cwd=db)
         assert "EDIT SUCCESSFUL" in (out3 + err3) or "Auto-merged" in (out3 + err3)
 
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "A0" in out, "a1's change missing"
         assert "B2" in out, "a2's change missing"
         assert "C4" in out, "a3's change missing"
@@ -943,7 +937,7 @@ class TestAutoMergeEdgeCases:
         assert "EDIT SUCCESSFUL" in combined or "Auto-merged" in combined
 
         # Verify merged content contains BOTH changes
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "A2" in out
         assert "B3" in out
         assert "L1" in out
@@ -1021,7 +1015,7 @@ class TestAutoMergeEdgeCases:
         assert "EDIT SUCCESSFUL" in combined or "Auto-merged" in combined
 
         # Verify both changes landed
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "NEW" in out     # a1's insert
         assert "L5" not in out  # a2's delete
 
@@ -1044,7 +1038,7 @@ class TestAutoMergeEdgeCases:
         combined = out + err
         assert "EDIT SUCCESSFUL" in combined or "Auto-merged" in combined
 
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "INSERT_A" in out
         assert "INSERT_B" in out
 
@@ -1106,7 +1100,7 @@ class TestAutoMergeEdgeCases:
         assert "EDIT SUCCESSFUL" in combined or "Auto-merged" in combined
 
         # Read back and verify exact content
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         # Must have a1's change AND a2's change, with middle untouched
         assert "XXX" in out, "a1's first-line change missing"
         assert "BBB" in out, "untouched line 2 missing"
@@ -1180,7 +1174,7 @@ class TestAutoMergeEdgeCases:
         combined = out + err
         assert "EDIT SUCCESSFUL" in combined or "Auto-merged" in combined
 
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "NEAR_TOP" in out
         assert "NEAR_BOTTOM" in out
         # Originals should be gone (use \n boundary to avoid matching line10, line18x, etc.)
@@ -1217,7 +1211,7 @@ class TestAutoMergeEdgeCases:
         assert "EDIT SUCCESSFUL" in combined3 or "Auto-merged" in combined3
 
         # Verify all three changes landed
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "A1" in out, "a1's change missing"
         assert "B3" in out, "a2's change missing"
         assert "C6" in out, "a3's change missing"
@@ -1264,7 +1258,7 @@ class TestAutoMergeEdgeCases:
         assert "EDIT SUCCESSFUL" in combined or "Auto-merged" in combined
 
         # a1's content should survive
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "some real content" in out
 
     # -- 16. Both agents add new lines (append) at the end ---------------
@@ -1305,7 +1299,7 @@ class TestAutoMergeEdgeCases:
         combined = out + err
         assert "EDIT SUCCESSFUL" in combined or "Auto-merged" in combined
 
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "ALPHA" in out, "a1's first-line change missing"
         assert "OMEGA" in out, "a2's last-line change missing"
         assert "M1" in out and "M2" in out and "M3" in out, "middle lines should be untouched"
@@ -1329,7 +1323,7 @@ class TestAutoMergeEdgeCases:
         combined = out + err
         assert "EDIT SUCCESSFUL" in combined or "Auto-merged" in combined
 
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "DELETE_TOP" not in out, "first line should have been deleted"
         assert "DELETE_BOT" not in out, "last line should have been deleted"
         assert "Keep1" in out and "Keep2" in out and "Keep3" in out
@@ -1361,7 +1355,7 @@ class TestAutoMergeEdgeCases:
         combined = out + err
         assert "EDIT SUCCESSFUL" in combined or "Auto-merged" in combined
 
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "NEW1" in out and "NEW2" in out and "NEW3" in out
         assert "FAR_AWAY" in out
         assert "L1" not in out and "L2" not in out and "L3" not in out
@@ -1546,7 +1540,7 @@ class TestSwarmMergeStress:
         # ════════════════════════════════════════════════════════════════════
         # VERIFICATION: exact final content
         # ════════════════════════════════════════════════════════════════════
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
 
         # Lines that SHOULD have been changed by landed agents:
         assert "A1_LINE0" in out,   "a1's line 0 change must be present"
@@ -1619,7 +1613,7 @@ class TestSwarmMergeStress:
             "Entire edit must be rejected even though lines 1 and 8 are safe"
 
         # Verify NONE of a2's changes landed — not even the safe ones
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "A2_L1" not in out, "a2's safe line 1 change must NOT be cherry-picked"
         assert "A2_L4" not in out, "a2's overlapping line 4 change must not appear"
         assert "A2_L8" not in out, "a2's safe line 8 change must NOT be cherry-picked"
@@ -1672,7 +1666,7 @@ class TestSwarmMergeStress:
             "a4 must conflict — line 7 is protected by a2's earlier auto-merge"
 
         # a2's value should be in the document, not a4's
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "A2" in out, "a2's auto-merged line 7 must be present"
         assert "A4" not in out, "a4's conflicting line 7 must NOT appear"
 
@@ -1714,7 +1708,7 @@ class TestSwarmMergeStress:
         assert "EDIT SUCCESSFUL" in (out + err) or "Auto-merged" in (out + err), \
             "a5 must auto-merge — line 9 doesn't overlap with anything landed"
 
-        rc, out, _ = niwa("peek", "h1_0", cwd=db)
+        rc, out, _ = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "A1" in out, "a1 landed"
         assert "A3" in out, "a3 auto-merged"
         assert "A5" in out, "a5 auto-merged despite other agents conflicting"
@@ -2320,5 +2314,752 @@ class TestUnicodeAndEdgeCases:
         rc, out, err = niwa("edit", "h1_0", "--agent", "a1", "--file", str(content_file), cwd=db)
         assert rc == 0
 
-        rc, out, err = niwa("peek", "h1_0", cwd=db)
+        rc, out, err = niwa("read", "h1_0", "--agent", "verify", cwd=db)
         assert "```" in out or "H1" in out
+
+
+# ── Token Counting ──────────────────────────────────────────────────────────
+
+
+class TestTokenCounting:
+    def test_tree_shows_token_counts(self, db):
+        """Tree output includes token counts for nodes with content."""
+        niwa("add", "Section A", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        content_file = db / "tokens.md"
+        content_file.write_text("This is some content for testing token counts.")
+        niwa("edit", "h1_0", "--agent", "a1", "--file", str(content_file), cwd=db)
+
+        rc, out, err = niwa("tree", cwd=db)
+        assert rc == 0
+        assert "tok" in out
+
+    def test_tree_shows_ast_summary(self, db):
+        """Tree output includes AST summary (e.g., paragraph and code indicators)."""
+        niwa("add", "Rich Section", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        content_file = db / "rich.md"
+        content_file.write_text(
+            "This is a paragraph of text.\n\n"
+            "```python\ndef hello():\n    print('world')\n```\n\n"
+            "Another paragraph here."
+        )
+        niwa("edit", "h1_0", "--agent", "a1", "--file", str(content_file), cwd=db)
+
+        rc, out, err = niwa("tree", cwd=db)
+        assert rc == 0
+        # AST summary should show paragraph indicator and code indicator
+        assert "¶" in out
+        assert "code" in out
+
+
+# ── Progressive Read ────────────────────────────────────────────────────────
+
+
+class TestProgressiveRead:
+    def _make_big_content(self):
+        """Generate varied markdown content exceeding 1000 tokens."""
+        lines = []
+        # Multiple long paragraphs
+        for i in range(5):
+            lines.append(f"This is paragraph number {i}. " * 20)
+            lines.append("")
+        # A large code block
+        lines.append("```python")
+        for i in range(40):
+            lines.append(f"    result_{i} = compute_value({i}, param='test_{i}')")
+        lines.append("```")
+        lines.append("")
+        # Another set of paragraphs
+        for i in range(5):
+            lines.append(f"Additional content block {i}. " * 20)
+            lines.append("")
+        # A bullet list
+        for i in range(30):
+            lines.append(f"- List item number {i} with extra description text here")
+        return "\n".join(lines)
+
+    def test_small_node_shows_full_content(self, db):
+        """Small nodes (<1000 tokens) show full content directly."""
+        niwa("add", "Small", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        content_file = db / "small.md"
+        content_file.write_text("Short content here.")
+        niwa("edit", "h1_0", "--agent", "a1", "--file", str(content_file), cwd=db)
+
+        rc, out, err = niwa("read", "h1_0", "--agent", "reader1", cwd=db)
+        assert rc == 0
+        assert "CONTENT:" in out
+        assert "Short content here." in out
+
+    def test_large_node_shows_structure(self, db):
+        """Large nodes (>1000 tokens) show structure table instead of full content."""
+        niwa("add", "Big", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        big_content = self._make_big_content()
+        content_file = db / "big.md"
+        content_file.write_text(big_content)
+        niwa("edit", "h1_0", "--agent", "a1", "--file", str(content_file), cwd=db)
+
+        rc, out, err = niwa("read", "h1_0", "--agent", "reader2", cwd=db)
+        assert rc == 0
+        # Should show structure table, not full content
+        assert "CONTENT STRUCTURE" in out or "paragraph" in out or "code" in out
+        # Should prompt user to use --section or --all
+        assert "--section" in out or "--all" in out
+
+    def test_read_all_flag(self, db):
+        """--all flag forces full content display even for large nodes."""
+        niwa("add", "Big2", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        big_content = self._make_big_content()
+        content_file = db / "big2.md"
+        content_file.write_text(big_content)
+        niwa("edit", "h1_0", "--agent", "a1", "--file", str(content_file), cwd=db)
+
+        rc, out, err = niwa("read", "h1_0", "--all", "--agent", "reader3", cwd=db)
+        assert rc == 0
+        assert "CONTENT:" in out
+
+    def test_read_section_flag(self, db):
+        """--section N shows content from a specific section."""
+        niwa("add", "Multi", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        content_file = db / "multi.md"
+        content_file.write_text(
+            "First paragraph of text.\n\n"
+            "```python\nprint('hello')\n```\n\n"
+            "Third paragraph here."
+        )
+        niwa("edit", "h1_0", "--agent", "a1", "--file", str(content_file), cwd=db)
+
+        rc, out, err = niwa("read", "h1_0", "--section", "1", "--agent", "reader4", cwd=db)
+        assert rc == 0
+        assert "SECTION 1" in out or "First paragraph" in out
+
+    def test_read_lines_flag(self, db):
+        """--lines M-N shows a specific line range."""
+        niwa("add", "Lines", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        content_file = db / "lines.md"
+        content_file.write_text("Line one\nLine two\nLine three\nLine four\nLine five")
+        niwa("edit", "h1_0", "--agent", "a1", "--file", str(content_file), cwd=db)
+
+        rc, out, err = niwa("read", "h1_0", "--lines", "1-3", "--agent", "reader5", cwd=db)
+        assert rc == 0
+        assert "Line one" in out
+        assert "Line three" in out
+
+
+# ── Content Structure (API tests) ──────────────────────────────────────────
+
+
+class TestContentStructure:
+    def _get_niwa(self, db):
+        """Create a Niwa instance from the db fixture."""
+        from niwa.niwa import Niwa
+        return Niwa(str(db / ".niwa"))
+
+    def test_content_structure_paragraphs(self, db):
+        """content_structure correctly identifies paragraphs."""
+        nw = self._get_niwa(db)
+        elements = nw.content_structure("Para one.\n\nPara two.")
+        assert len(elements) == 2
+        assert all(e['type'] == 'paragraph' for e in elements)
+
+    def test_content_structure_code_block(self, db):
+        """content_structure identifies fenced code blocks with language."""
+        nw = self._get_niwa(db)
+        elements = nw.content_structure("```python\ndef hello():\n    pass\n```")
+        code_elems = [e for e in elements if e['type'] == 'code']
+        assert len(code_elems) == 1
+        assert code_elems[0].get('lang') == 'python'
+
+    def test_content_structure_mixed(self, db):
+        """content_structure handles mixed content types."""
+        nw = self._get_niwa(db)
+        content = (
+            "A paragraph.\n\n"
+            "```python\ncode()\n```\n\n"
+            "- item one\n- item two\n\n"
+            "Another paragraph."
+        )
+        elements = nw.content_structure(content)
+        types = [e['type'] for e in elements]
+        assert 'paragraph' in types
+        assert 'code' in types
+        assert 'bullet_list' in types
+        assert len(elements) >= 4
+
+    def test_content_structure_empty(self, db):
+        """content_structure returns empty list for empty content."""
+        nw = self._get_niwa(db)
+        assert nw.content_structure("") == []
+        assert nw.content_structure("   ") == []
+
+
+# ── Delete Command ───────────────────────────────────────────────────────────
+
+
+class TestDelete:
+    def test_delete_leaf_node(self, db):
+        """Delete a leaf node (no children)."""
+        niwa("add", "Parent", "--agent", "a1", cwd=db)
+        niwa("add", "Child", "--parent", "h1_0", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("delete", "h2_0", "--agent", "a1", cwd=db)
+        assert rc == 0
+        assert "DELETED" in out
+        # Child should be gone from tree
+        rc, out, err = niwa("tree", cwd=db)
+        assert "h2_0" not in out
+        assert "h1_0" in out  # Parent still there
+
+    def test_delete_node_with_children_reparents(self, db):
+        """Delete a node with children reparents them to grandparent."""
+        niwa("add", "Parent", "--agent", "a1", cwd=db)
+        niwa("add", "Child", "--parent", "h1_0", "--agent", "a1", cwd=db)
+        # Delete parent, child should be reparented to root
+        rc, out, err = niwa("delete", "h1_0", "--agent", "a1", cwd=db)
+        assert rc == 0
+        assert "reparented" in out
+        # Child should still exist in tree
+        rc, out, err = niwa("tree", cwd=db)
+        assert "h2_0" in out
+        assert "h1_0" not in out
+
+    def test_delete_root_fails(self, db):
+        """Cannot delete the root node."""
+        rc, out, err = niwa("delete", "root", "--agent", "a1", cwd=db)
+        assert "Cannot delete root" in out
+
+    def test_delete_nonexistent_fails(self, db):
+        """Delete a nonexistent node returns error."""
+        rc, out, err = niwa("delete", "h99_99", "--agent", "a1", cwd=db)
+        assert "not found" in out
+
+    def test_delete_no_args(self, db):
+        """Delete without args shows error."""
+        rc, out, err = niwa("delete", cwd=db)
+        # Should error about missing node ID
+        assert rc == 0 or "node" in out.lower() or "id" in out.lower()
+
+    def test_delete_cleans_pending_reads(self, db):
+        """Deleting a node cleans up its pending reads."""
+        niwa("add", "Temp", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "reader1", cwd=db)
+        # Now delete it
+        niwa("delete", "h1_0", "--agent", "a1", cwd=db)
+        # Status should not crash
+        rc, out, err = niwa("status", "--agent", "reader1", cwd=db)
+        assert rc == 0
+
+    def test_delete_middle_of_chain(self, db):
+        """Delete a middle node in A→B→C chain, C should reparent to A's parent."""
+        niwa("add", "A", "--agent", "a1", cwd=db)
+        niwa("add", "B", "--parent", "h1_0", "--agent", "a1", cwd=db)
+        niwa("add", "C", "--parent", "h2_0", "--agent", "a1", cwd=db)
+        # Delete B (middle), C should reparent to A
+        rc, out, err = niwa("delete", "h2_0", "--agent", "a1", cwd=db)
+        assert rc == 0
+        assert "reparented" in out
+        rc, out, err = niwa("tree", cwd=db)
+        # C should be child of A now
+        assert "h3_0" in out
+        assert "h1_0" in out
+        assert "h2_0" not in out
+
+
+# ── Move Command ─────────────────────────────────────────────────────────────
+
+
+class TestMove:
+    def test_move_basic(self, db):
+        """Move a node from one parent to another."""
+        niwa("add", "Section A", "--agent", "a1", cwd=db)
+        niwa("add", "Section B", "--agent", "a1", cwd=db)
+        niwa("add", "Child", "--parent", "h1_0", "--agent", "a1", cwd=db)
+        # Move child from A to B
+        rc, out, err = niwa("move", "h2_0", "--under", "h1_1", "--agent", "a1", cwd=db)
+        assert rc == 0
+        assert "Moved" in out
+        # Verify tree
+        rc, out, err = niwa("tree", cwd=db)
+        assert "h2_0" in out
+
+    def test_move_root_fails(self, db):
+        """Cannot move root node."""
+        niwa("add", "A", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("move", "root", "--under", "h1_0", "--agent", "a1", cwd=db)
+        assert "Cannot move root" in out
+
+    def test_move_under_self_fails(self, db):
+        """Cannot move a node under itself."""
+        niwa("add", "A", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("move", "h1_0", "--under", "h1_0", "--agent", "a1", cwd=db)
+        assert "Cannot move node under itself" in out
+
+    def test_move_under_descendant_fails(self, db):
+        """Cannot move a node under its own descendant (cycle)."""
+        niwa("add", "Parent", "--agent", "a1", cwd=db)
+        niwa("add", "Child", "--parent", "h1_0", "--agent", "a1", cwd=db)
+        # Try to move Parent under Child
+        rc, out, err = niwa("move", "h1_0", "--under", "h2_0", "--agent", "a1", cwd=db)
+        assert "descendant" in out
+
+    def test_move_already_under_same_parent(self, db):
+        """Moving a node under its current parent should fail gracefully."""
+        niwa("add", "A", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("move", "h1_0", "--under", "root", "--agent", "a1", cwd=db)
+        assert "already under" in out
+
+    def test_move_nonexistent_node(self, db):
+        """Moving a nonexistent node returns error."""
+        rc, out, err = niwa("move", "h99_99", "--under", "root", "--agent", "a1", cwd=db)
+        assert "not found" in out
+
+    def test_move_to_nonexistent_parent(self, db):
+        """Moving to a nonexistent parent returns error."""
+        niwa("add", "A", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("move", "h1_0", "--under", "h99_99", "--agent", "a1", cwd=db)
+        assert "not found" in out
+
+    def test_move_no_target(self, db):
+        """Move without --under shows usage."""
+        niwa("add", "A", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("move", "h1_0", "--agent", "a1", cwd=db)
+        assert "MISSING TARGET" in out or "under" in out.lower()
+
+    def test_move_updates_levels(self, db):
+        """Move updates heading levels of moved node and descendants."""
+        from niwa.niwa import Niwa
+        niwa("add", "A", "--agent", "a1", cwd=db)          # h1_0, level 1
+        niwa("add", "B", "--agent", "a1", cwd=db)          # h1_1, level 1
+        niwa("add", "Sub", "--parent", "h1_0", "--agent", "a1", cwd=db)  # h2_0, level 2
+        # Move Sub under root (should become level 1)
+        niwa("move", "h2_0", "--under", "root", "--agent", "a1", cwd=db)
+        nw = Niwa(str(db / ".niwa"))
+        try:
+            node = nw.read_node("h2_0")
+            assert node['level'] == 1  # root level + 1
+        finally:
+            nw.close()
+
+
+# ── Dry-Run on Edit ──────────────────────────────────────────────────────────
+
+
+class TestDryRunEdit:
+    def test_dry_run_would_succeed(self, db):
+        """--dry-run on edit shows success preview without applying."""
+        niwa("add", "Section", "Original content", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("edit", "h1_0", "New content", "--agent", "a1", "--dry-run", cwd=db)
+        assert rc == 0
+        assert "DRY RUN" in out
+        assert "WOULD SUCCEED" in out
+        # Verify content was NOT changed
+        from niwa.niwa import Niwa
+        nw = Niwa(str(db / ".niwa"))
+        try:
+            node = nw.read_node("h1_0")
+            assert node['content'] == "Original content"
+            assert node['version'] == 1
+        finally:
+            nw.close()
+
+    def test_dry_run_would_conflict(self, db):
+        """--dry-run shows conflict warning when stale."""
+        from niwa.niwa import Niwa
+        niwa("add", "Section", "V1", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "agent_a", cwd=db)
+        # Another agent edits in between
+        niwa("read", "h1_0", "--agent", "agent_b", cwd=db)
+        niwa("edit", "h1_0", "V2 by B", "--agent", "agent_b", cwd=db)
+        # Now dry-run as agent_a
+        rc, out, err = niwa("edit", "h1_0", "V2 by A", "--agent", "agent_a", "--dry-run", cwd=db)
+        assert rc == 0
+        assert "WOULD FAIL" in out
+        assert "conflict" in out.lower()
+
+    def test_dry_run_nonexistent_node(self, db):
+        """--dry-run on a nonexistent node shows error."""
+        rc, out, err = niwa("edit", "h99_99", "content", "--agent", "a1", "--dry-run", cwd=db)
+        assert "WOULD FAIL" in out
+        assert "not_found" in out or "not found" in out.lower()
+
+
+# ── Error Paths ──────────────────────────────────────────────────────────────
+
+
+class TestErrorPaths:
+    def test_edit_without_read(self, db):
+        """Edit without prior read should still work (uses current as base)."""
+        niwa("add", "Section", "Content", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("edit", "h1_0", "Updated", "--agent", "a1", cwd=db)
+        assert rc == 0
+        assert "EDIT SUCCESSFUL" in out
+
+    def test_edit_nonexistent_node(self, db):
+        """Edit a node that doesn't exist."""
+        rc, out, err = niwa("edit", "h99_99", "content", "--agent", "a1", cwd=db)
+        assert "FAILED" in out or "not found" in out.lower()
+
+    def test_read_nonexistent_node(self, db):
+        """Read a node that doesn't exist shows error."""
+        rc, out, err = niwa("read", "h99_99", "--agent", "a1", cwd=db)
+        assert "not found" in out.lower() or "NODE_ID" in out.lower() or rc != 0
+
+    def test_resolve_without_conflict(self, db):
+        """Resolve when there's no conflict."""
+        niwa("add", "Section", "Content", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("resolve", "h1_0", "ACCEPT_THEIRS", "--agent", "a1", cwd=db)
+        # Should handle gracefully
+        assert rc == 0
+
+    def test_resolve_invalid_resolution(self, db):
+        """Invalid resolution type shows error."""
+        niwa("add", "Section", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("resolve", "h1_0", "INVALID", "--agent", "a1", cwd=db)
+        assert "INVALID" in out
+
+    def test_resolve_manual_merge_no_content(self, db):
+        """MANUAL_MERGE without content shows error."""
+        niwa("add", "Section", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("resolve", "h1_0", "MANUAL_MERGE", "--agent", "a1", cwd=db)
+        assert "REQUIRES CONTENT" in out or "content" in out.lower()
+
+    def test_rollback_nonexistent_version(self, db):
+        """Rollback to a version that doesn't exist."""
+        niwa("add", "Section", "V1", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("rollback", "h1_0", "99", "--agent", "a1", cwd=db)
+        assert "CANNOT ROLLBACK" in out or "not found" in out.lower()
+
+    def test_rollback_invalid_version_number(self, db):
+        """Rollback with non-numeric version."""
+        niwa("add", "Section", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("rollback", "h1_0", "abc", "--agent", "a1", cwd=db)
+        assert "must be a number" in out.lower() or rc != 0
+
+    def test_history_nonexistent_node(self, db):
+        """History for a nonexistent node."""
+        rc, out, err = niwa("history", "h99_99", cwd=db)
+        assert "NO HISTORY" in out or "not found" in out.lower()
+
+    def test_search_no_results(self, db):
+        """Search with no matches."""
+        niwa("add", "Hello", "World", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("search", "zzzznonexistent", cwd=db)
+        assert "NO RESULTS" in out
+
+    def test_unknown_command(self, db):
+        """Unknown command shows error."""
+        rc, out, err = niwa("foobar", cwd=db)
+        assert "foobar" in out or rc != 0
+
+    def test_add_duplicate_title(self, db):
+        """Adding a node with duplicate title shows warning."""
+        niwa("add", "Same Title", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("add", "Same Title", "--agent", "a1", cwd=db)
+        assert "DUPLICATE" in out
+
+    def test_add_to_nonexistent_parent(self, db):
+        """Adding under a nonexistent parent shows error."""
+        rc, out, err = niwa("add", "Orphan", "--parent", "h99_99", "--agent", "a1", cwd=db)
+        assert "NOT FOUND" in out
+
+    def test_edit_no_content(self, db):
+        """Edit without content shows error."""
+        niwa("add", "Section", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("edit", "h1_0", "--agent", "a1", cwd=db)
+        assert "content" in out.lower() or "TIP" in out
+
+    def test_edit_no_node_id(self, db):
+        """Edit without node ID shows error."""
+        rc, out, err = niwa("edit", cwd=db)
+        assert rc == 0 or "node" in out.lower()
+
+    def test_read_no_node_id(self, db):
+        """Read without node ID shows error."""
+        rc, out, err = niwa("read", cwd=db)
+        assert rc == 0 or "node" in out.lower()
+
+    def test_read_invalid_section_number(self, db):
+        """Read with invalid section number."""
+        niwa("add", "Section", "Some content\n\nMore content", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("read", "h1_0", "--section", "999", "--agent", "a1", cwd=db)
+        assert "INVALID SECTION" in out
+
+    def test_read_invalid_line_range(self, db):
+        """Read with malformed line range."""
+        niwa("add", "Section", "Content", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("read", "h1_0", "--lines", "abc", "--agent", "a1", cwd=db)
+        assert "INVALID LINE RANGE" in out
+
+    def test_no_database(self, tmp_path):
+        """Commands without initialized database show error."""
+        rc, out, err = niwa("tree", cwd=tmp_path)
+        assert "NOT INITIALIZED" in out
+
+    def test_load_nonexistent_file(self, db):
+        """Load a file that doesn't exist."""
+        rc, out, err = niwa("load", "nonexistent.md", cwd=db)
+        assert "NOT FOUND" in out or "not found" in out.lower()
+
+
+# ── Agent Validation ─────────────────────────────────────────────────────────
+
+
+class TestAgentValidation:
+    def test_agent_name_special_chars(self, db):
+        """Agent names with special characters are rejected."""
+        niwa("add", "Section", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("read", "h1_0", "--agent", "agent@bad", cwd=db)
+        assert "INVALID AGENT NAME" in out
+
+    def test_agent_name_too_long(self, db):
+        """Agent names over 50 chars are rejected."""
+        long_name = "a" * 51
+        niwa("add", "Section", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("read", "h1_0", "--agent", long_name, cwd=db)
+        assert "INVALID AGENT NAME" in out
+
+    def test_agent_name_spaces(self, db):
+        """Agent names with spaces are rejected."""
+        niwa("add", "Section", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("read", "h1_0", "--agent", "has space", cwd=db)
+        # argparse may split this, but if it gets through, validation catches it
+        assert rc == 0 or "INVALID" in out
+
+    def test_valid_agent_names(self, db):
+        """Various valid agent name patterns work."""
+        niwa("add", "Section", "Content", "--agent", "a1", cwd=db)
+        for name in ["claude_1", "agent-42", "researcher_A", "test123"]:
+            rc, out, err = niwa("read", "h1_0", "--agent", name, cwd=db)
+            assert rc == 0
+            assert "INVALID" not in out
+
+
+# ── File I/O Errors ──────────────────────────────────────────────────────────
+
+
+class TestFileIO:
+    def test_edit_from_nonexistent_file(self, db):
+        """Edit --file with a file that doesn't exist."""
+        niwa("add", "Section", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("edit", "h1_0", "--file", "/nonexistent/path.txt", "--agent", "a1", cwd=db)
+        assert "CANNOT READ FILE" in out or "No such file" in out
+
+    def test_add_from_nonexistent_file(self, db):
+        """Add --file with a file that doesn't exist."""
+        rc, out, err = niwa("add", "Title", "--file", "/nonexistent/path.txt", "--agent", "a1", cwd=db)
+        assert "CANNOT READ FILE" in out or "No such file" in out
+
+    def test_resolve_from_nonexistent_file(self, db):
+        """Resolve --file with a nonexistent file."""
+        niwa("add", "Section", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("resolve", "h1_0", "MANUAL_MERGE", "--file", "/nonexistent/path.txt", "--agent", "a1", cwd=db)
+        assert "CANNOT READ FILE" in out or "No such file" in out
+
+    def test_edit_from_file(self, db):
+        """Edit content from a file works correctly."""
+        niwa("add", "Section", "Original", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        content_file = db / "edit_content.txt"
+        content_file.write_text("New content from file")
+        rc, out, err = niwa("edit", "h1_0", "--file", str(content_file), "--agent", "a1", cwd=db)
+        assert "EDIT SUCCESSFUL" in out
+
+    def test_add_from_file(self, db):
+        """Add content from a file works correctly."""
+        content_file = db / "add_content.txt"
+        content_file.write_text("Content from file")
+        rc, out, err = niwa("add", "FileSection", "--file", str(content_file), "--agent", "a1", cwd=db)
+        assert rc == 0
+        assert "Created" in out
+
+
+# ── Multi-Agent Edge Cases ───────────────────────────────────────────────────
+
+
+class TestMultiAgentEdgeCases:
+    def test_stale_read_detection(self, db):
+        """Status shows stale reads when version changes between read and status check."""
+        niwa("add", "Section", "V1", "--agent", "a1", cwd=db)
+        # Agent A reads
+        niwa("read", "h1_0", "--agent", "agent_a", cwd=db)
+        # Agent B edits
+        niwa("read", "h1_0", "--agent", "agent_b", cwd=db)
+        niwa("edit", "h1_0", "V2", "--agent", "agent_b", cwd=db)
+        # Agent A's status should show stale
+        rc, out, err = niwa("status", "--agent", "agent_a", cwd=db)
+        assert "STALE" in out
+
+    def test_conflict_stored_for_retrieval(self, db):
+        """Conflicts are stored and visible via conflicts command."""
+        niwa("add", "Section", "V1", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "agent_a", cwd=db)
+        niwa("read", "h1_0", "--agent", "agent_b", cwd=db)
+        # B edits first
+        niwa("edit", "h1_0", "V2 by B", "--agent", "agent_b", cwd=db)
+        # A tries to edit same region → conflict
+        niwa("edit", "h1_0", "V2 by A", "--agent", "agent_a", cwd=db)
+        # Check conflicts
+        rc, out, err = niwa("conflicts", "--agent", "agent_a", cwd=db)
+        assert "PENDING CONFLICTS" in out or "h1_0" in out
+
+    def test_re_read_clears_conflict(self, db):
+        """Re-reading a node clears its stored conflict."""
+        niwa("add", "Section", "V1", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "agent_a", cwd=db)
+        niwa("read", "h1_0", "--agent", "agent_b", cwd=db)
+        niwa("edit", "h1_0", "V2 by B", "--agent", "agent_b", cwd=db)
+        niwa("edit", "h1_0", "V2 by A", "--agent", "agent_a", cwd=db)
+        # Re-read should clear the conflict
+        niwa("read", "h1_0", "--agent", "agent_a", cwd=db)
+        rc, out, err = niwa("conflicts", "--agent", "agent_a", cwd=db)
+        assert "NO PENDING CONFLICTS" in out
+
+    def test_auto_merge_different_regions(self, db):
+        """Auto-merge when two agents edit different parts of the content."""
+        content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5"
+        niwa("add", "Section", content, "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "agent_a", cwd=db)
+        niwa("read", "h1_0", "--agent", "agent_b", cwd=db)
+        # A changes line 1
+        niwa("edit", "h1_0", "Modified Line 1\nLine 2\nLine 3\nLine 4\nLine 5", "--agent", "agent_a", cwd=db)
+        # B changes line 5 — should auto-merge (no conflict)
+        rc, out, err = niwa("edit", "h1_0", "Line 1\nLine 2\nLine 3\nLine 4\nModified Line 5", "--agent", "agent_b", cwd=db)
+        assert "EDIT SUCCESSFUL" in out
+        assert "CONFLICT" not in out
+
+
+# ── Cleanup Command ──────────────────────────────────────────────────────────
+
+
+class TestCleanup:
+    def test_cleanup_runs(self, db):
+        """Cleanup runs without error."""
+        rc, out, err = niwa("cleanup", cwd=db)
+        assert rc == 0
+        assert "CLEANUP COMPLETE" in out
+
+    def test_cleanup_with_max_age(self, db):
+        """Cleanup with custom max-age."""
+        rc, out, err = niwa("cleanup", "--max-age", "1", cwd=db)
+        assert rc == 0
+        assert "CLEANUP COMPLETE" in out
+
+
+# ── Whoami / Agents ──────────────────────────────────────────────────────────
+
+
+class TestWhoami:
+    def test_whoami_suggests_name(self, db):
+        """Whoami without agent suggests a unique name."""
+        rc, out, err = niwa("whoami", cwd=db)
+        assert rc == 0
+        assert "agent_" in out
+
+    def test_whoami_with_agent_shows_state(self, db):
+        """Whoami with agent shows their state."""
+        niwa("add", "Section", "--agent", "test_agent", cwd=db)
+        rc, out, err = niwa("whoami", "--agent", "test_agent", cwd=db)
+        assert rc == 0
+        assert "test_agent" in out
+
+    def test_agents_empty(self, db):
+        """Agents command on fresh db shows system agent."""
+        rc, out, err = niwa("agents", cwd=db)
+        assert rc == 0
+        # Root was created by system
+        assert "system" in out
+
+    def test_agents_lists_all(self, db):
+        """Agents command lists all agents who've made edits."""
+        niwa("add", "A", "--agent", "alpha", cwd=db)
+        niwa("add", "B", "--agent", "beta", cwd=db)
+        rc, out, err = niwa("agents", cwd=db)
+        assert "alpha" in out
+        assert "beta" in out
+
+
+# ── Check Command ────────────────────────────────────────────────────────────
+
+
+class TestCheck:
+    def test_check_healthy_db(self, db):
+        """Check command on healthy database."""
+        niwa("add", "Section", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("check", cwd=db)
+        assert rc == 0
+        assert "HEALTH CHECK" in out
+        assert "INITIALIZED" in out
+
+    def test_check_shows_counts(self, db):
+        """Check shows node counts."""
+        niwa("add", "A", "--agent", "a1", cwd=db)
+        niwa("add", "B", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("check", cwd=db)
+        assert "Nodes:" in out
+
+
+# ── Title and Summarize ──────────────────────────────────────────────────────
+
+
+class TestTitleSummarize:
+    def test_title_update(self, db):
+        """Update a node's title."""
+        niwa("add", "Old Title", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("title", "h1_0", "New Title", "--agent", "a1", cwd=db)
+        assert rc == 0
+        assert "updated" in out.lower()
+        # Verify
+        rc, out, err = niwa("tree", cwd=db)
+        assert "New Title" in out
+
+    def test_title_nonexistent(self, db):
+        """Title update on nonexistent node."""
+        rc, out, err = niwa("title", "h99_99", "Title", "--agent", "a1", cwd=db)
+        assert "not found" in out.lower() or rc != 0
+
+    def test_summarize(self, db):
+        """Add a summary to a node."""
+        niwa("add", "Section", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("summarize", "h1_0", "This covers auth", "--agent", "a1", cwd=db)
+        assert rc == 0
+        assert "updated" in out.lower()
+
+
+# ── Rollback ─────────────────────────────────────────────────────────────────
+
+
+class TestRollback:
+    def test_rollback_success(self, db):
+        """Rollback restores previous version content."""
+        niwa("add", "Section", "Version 1 content", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("edit", "h1_0", "Version 2 content", "--agent", "a1", cwd=db)
+        # Rollback to v2 (the edit created v2 with "Version 2 content", v1 had "Version 1 content")
+        # v2 is stored in history
+        rc, out, err = niwa("rollback", "h1_0", "2", "--agent", "a1", cwd=db)
+        assert rc == 0
+        assert "ROLLBACK SUCCESSFUL" in out
+        # Now version should be 3 with v2's content
+        from niwa.niwa import Niwa
+        nw = Niwa(str(db / ".niwa"))
+        try:
+            node = nw.read_node("h1_0")
+            assert node['version'] == 3
+            assert node['content'] == "Version 2 content"
+        finally:
+            nw.close()
+
+    def test_rollback_preserves_history(self, db):
+        """Rollback creates new version, doesn't delete history."""
+        niwa("add", "Section", "V1", "--agent", "a1", cwd=db)
+        niwa("read", "h1_0", "--agent", "a1", cwd=db)
+        niwa("edit", "h1_0", "V2", "--agent", "a1", cwd=db)
+        niwa("rollback", "h1_0", "2", "--agent", "a1", cwd=db)
+        rc, out, err = niwa("history", "h1_0", cwd=db)
+        assert "Version 3" in out or "v3" in out.lower()

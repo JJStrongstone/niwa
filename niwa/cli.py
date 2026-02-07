@@ -11,6 +11,7 @@ from .command import print_command_help
 from .core import LLM_SYSTEM_PROMPT, handle_hook_event, print_error, setup_claude_hooks
 from .models import ConflictAnalysis, ConflictType
 from .niwa import Niwa
+from .tokens import count_tokens
 
 
 def main():
@@ -21,8 +22,7 @@ commands:
   load <file>           Load markdown file into database
   add <title> [content] Add a node directly (--parent, --file, --stdin)
   tree                  Show document structure with node IDs
-  peek <id>             Quick view (no edit tracking)
-  read <id>             Read for editing (tracks version for conflict detection)
+  read <id>             Read for editing (--all, --section N, --lines M-N)
   edit <id> <content>   Edit a node's content
   resolve <id> <type>   Resolve a conflict (ACCEPT_YOURS|ACCEPT_THEIRS|MANUAL_MERGE)
   search <query>        Search content by keyword
@@ -35,6 +35,8 @@ commands:
   whoami                Get suggested unique agent name
   check                 Verify database health
   cleanup               Remove stale pending reads/conflicts
+  delete <id>           Delete a node (children reparented to parent)
+  move <id>             Move a node under a different parent (--under)
   setup <target>        Set up integrations (e.g., 'setup claude')
   help [command]        Show help (optionally for specific command)
 
@@ -64,7 +66,11 @@ examples:
     parser.add_argument('--max-age', type=int, default=3600, help='Max age in seconds for cleanup (default 3600)')
     parser.add_argument('--dry-run', action='store_true', help='Preview edit without applying')
     parser.add_argument('--parent', default=None, help='Parent node ID for add command (default: root)')
+    parser.add_argument('--all', action='store_true', dest='show_all', help='Show full content even for large nodes')
+    parser.add_argument('--section', type=int, default=None, help='Show specific section number from content structure')
+    parser.add_argument('--lines', default=None, help='Show specific line range (e.g., "1-25")')
     parser.add_argument('--remove', action='store_true', help='Remove hook configuration (for setup --remove)')
+    parser.add_argument('--under', default=None, help='Target parent node ID for move command')
     # Hook event handling (called by Claude Code hooks)
     parser.add_argument('--hook-event', default=None, help='Hook event name (internal use by hooks)')
     parser.add_argument('--hook-input', default=None, help='Path to hook input JSON file (internal use)')
@@ -195,7 +201,7 @@ examples:
     db = Niwa()
 
     # Validate agent name for commands that use it
-    agent_commands = ['read', 'edit', 'resolve', 'status', 'conflicts', 'whoami', 'dry-run', 'rollback', 'add']
+    agent_commands = ['read', 'edit', 'resolve', 'status', 'conflicts', 'whoami', 'dry-run', 'rollback', 'add', 'delete', 'move']
     if args.command in agent_commands and args.agent != 'default_agent':
         valid, msg = db.validate_agent_name(args.agent)
         if not valid:
@@ -414,18 +420,6 @@ examples:
             else:
                 print(tree)
 
-        elif args.command == 'peek':
-            if not args.args:
-                print_error('no_node_id')
-                print_command_help('peek')
-                return
-            node_id = args.args[0]
-            result = db.peek(node_id)
-            if "not found" in result:
-                print_error('node_not_found', {'provided_id': node_id}, show_full_guide=True)
-            else:
-                print(result)
-
         elif args.command == 'read':
             if not args.args:
                 print_error('no_node_id')
@@ -434,7 +428,82 @@ examples:
             node_id = args.args[0]
             node = db.read_for_edit(node_id, args.agent)
             if node:
-                print(f"""
+                tok = count_tokens(node['content'])
+                content = node['content']
+                lines = content.split('\n')
+
+                if args.section is not None:
+                    # Show a specific section
+                    elements = db.content_structure(content)
+                    idx = args.section - 1  # 1-indexed to 0-indexed
+                    if idx < 0 or idx >= len(elements):
+                        print(f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ ❌ INVALID SECTION NUMBER                                                    ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ Requested section {args.section}, but node has {len(elements)} section(s).{' ' * max(0, 33 - len(str(args.section)) - len(str(len(elements))))}║
+║                                                                              ║
+║ Run without --section to see the structure table.                            ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""")
+                    else:
+                        elem = elements[idx]
+                        start = elem['lines'][0]
+                        end = elem['lines'][1]
+                        section_lines = lines[start - 1:end]
+                        section_text = '\n'.join(section_lines)
+                        print(f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 📖 SECTION {args.section} of [{node_id}]{' ' * max(0, 60 - len(str(args.section)) - len(node_id))}║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ Type: {elem['type']:<70} ║
+║ Lines: {f"{start}-{end}":<68} ║
+║ Tokens: ~{elem['tokens']:,}{' ' * max(0, 66 - len(f"{elem['tokens']:,}"))}║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+CONTENT (lines {start}-{end}):
+─────────────────────────────────────────────────────────────────────────────────
+{section_text}
+─────────────────────────────────────────────────────────────────────────────────
+""")
+
+                elif args.lines is not None:
+                    # Show a specific line range
+                    try:
+                        parts = args.lines.split('-')
+                        line_start = int(parts[0])
+                        line_end = int(parts[1]) if len(parts) > 1 else line_start
+                    except (ValueError, IndexError):
+                        print(f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ ❌ INVALID LINE RANGE                                                        ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ Expected format: M-N (e.g., "1-25")                                          ║
+║ Got: {args.lines[:70]:<71} ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""")
+                        return
+                    line_start = max(1, line_start)
+                    line_end = min(len(lines), line_end)
+                    selected = lines[line_start - 1:line_end]
+                    selected_text = '\n'.join(selected)
+                    print(f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 📖 LINES {line_start}-{line_end} of [{node_id}]{' ' * max(0, 58 - len(str(line_start)) - len(str(line_end)) - len(node_id))}║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ Total lines: {len(lines):<62} ║
+║ Total tokens: ~{tok:,}{' ' * max(0, 60 - len(f"{tok:,}"))}║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+CONTENT (lines {line_start}-{line_end}):
+─────────────────────────────────────────────────────────────────────────────────
+{selected_text}
+─────────────────────────────────────────────────────────────────────────────────
+""")
+
+                elif args.show_all or tok <= db.PROGRESSIVE_READ_THRESHOLD:
+                    # Full content display (small node or --all forced)
+                    print(f"""
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║ 📖 NODE READ SUCCESSFULLY                                                    ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -442,6 +511,7 @@ examples:
 ║ Version: {node['version']:<63} ║
 ║ Title: {node.get('title', '(none)')[:61]:<63} ║
 ║ Last edited by: {node.get('last_agent', '?'):<54} ║
+║ Tokens: ~{tok:,}{' ' * max(0, 66 - len(f"{tok:,}"))}║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║ ⚠️  IMPORTANT: Your agent "{args.agent}" is now tracked as reading v{node['version']:<9} ║
 ║    If you edit and someone else edited in between → CONFLICT                 ║
@@ -454,6 +524,42 @@ CONTENT:
 
 NEXT: To edit this node, run:
   niwa edit {node_id} "<your new content>" --agent {args.agent} --summary "what you changed"
+""")
+
+                else:
+                    # Large node: progressive disclosure — show structure table
+                    elements = db.content_structure(content)
+                    print(f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 📖 NODE READ — LARGE CONTENT                                                ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ Node ID: {node_id:<63} ║
+║ Version: {node['version']:<63} ║
+║ Title: {node.get('title', '(none)')[:61]:<63} ║
+║ Last edited by: {node.get('last_agent', '?'):<54} ║
+║ Tokens: ~{tok:,}{' ' * max(0, 66 - len(f"{tok:,}"))}║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ ⚠️  IMPORTANT: Your agent "{args.agent}" is now tracked as reading v{node['version']:<9} ║
+║    If you edit and someone else edited in between → CONFLICT                 ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+CONTENT STRUCTURE ({len(elements)} sections, ~{tok:,} tokens total):
+─────────────────────────────────────────────────────────────────────────────────
+ #  │ Type          │ Lines     │ Tokens │ Preview
+────┼───────────────┼───────────┼────────┼──────────────────────────────────────""")
+                    for i, elem in enumerate(elements, 1):
+                        etype = elem['type'][:13]
+                        erange = f"{elem['lines'][0]}-{elem['lines'][1]}"
+                        etok = elem['tokens']
+                        preview = elem.get('preview', '')[:38]
+                        print(f" {i:<2} │ {etype:<13} │ {erange:<9} │ {etok:>6} │ {preview}")
+                    print(f"""────┴───────────────┴───────────┴────────┴──────────────────────────────────────
+─────────────────────────────────────────────────────────────────────────────────
+
+TO VIEW CONTENT:
+  niwa read {node_id} --section N --agent {args.agent:<20}  # View one section
+  niwa read {node_id} --lines M-N --agent {args.agent:<19}  # View line range
+  niwa read {node_id} --all --agent {args.agent:<25}  # View full content
 """)
             else:
                 print_error('node_not_found', {'provided_id': node_id})
@@ -505,6 +611,42 @@ NEXT: To edit this node, run:
 ║ Or use --stdin for piping:                                                   ║
 ║    cat content.txt | niwa edit h2_3 --stdin --agent me       ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
+""")
+                return
+
+            # --dry-run flag: preview without applying
+            if args.dry_run:
+                result = db.dry_run_edit(node_id, content, args.agent)
+                if result['would_succeed']:
+                    print(f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ ✅ DRY RUN: EDIT WOULD SUCCEED                                               ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ Node: {node_id:<70} ║
+║ {result['message']:<76} ║
+║ Content changed: {'Yes' if result.get('content_changed') else 'No (same content)':<58} ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+To actually apply this edit:
+  niwa edit {node_id} {"--file " + args.file if args.file else '"<content>"'} --agent {args.agent}
+""")
+                else:
+                    icon = "⚠️" if result['reason'] == 'conflict' else "❌"
+                    print(f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ {icon} DRY RUN: EDIT WOULD FAIL                                               ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ Node: {node_id:<70} ║
+║ Reason: {result['reason']:<68} ║
+║ {result['message']:<76} ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""")
+                    if result['reason'] == 'conflict':
+                        print(f"""
+You're {result.get('versions_behind', '?')} version(s) behind.
+
+Re-read to get the latest version, then edit:
+  niwa read {node_id} --agent {args.agent}
 """)
                 return
 
@@ -1124,6 +1266,77 @@ You're {result.get('versions_behind', '?')} version(s) behind.
 
 Re-read to get the latest version, then edit:
   niwa read {node_id} --agent {args.agent}
+""")
+
+        elif args.command == 'delete':
+            if not args.args:
+                print_error('no_node_id')
+                print_command_help('delete')
+                return
+            node_id = args.args[0]
+            result = db.delete_node(node_id, args.agent)
+            if result.success:
+                print(f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ ✅ NODE DELETED                                                              ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ {result.message:<76} ║
+║ Agent: {args.agent:<69} ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""")
+                print(db.get_tree())
+            else:
+                print(f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ ❌ DELETE FAILED                                                             ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ {result.message:<76} ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""")
+
+        elif args.command == 'move':
+            if not args.args:
+                print_error('no_node_id')
+                print_command_help('move')
+                return
+            node_id = args.args[0]
+            new_parent_id = args.under
+            if not new_parent_id:
+                if len(args.args) >= 2:
+                    new_parent_id = args.args[1]
+                else:
+                    print(f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ ❌ MISSING TARGET PARENT                                                     ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ USAGE:                                                                      ║
+║   niwa move <node_id> --under <parent_id> --agent <name>    ║
+║                                                                              ║
+║ EXAMPLE:                                                                     ║
+║   niwa move h2_3 --under h1_0 --agent claude_1              ║
+║   niwa move h2_3 --under root --agent claude_1              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""")
+                    return
+
+            result = db.move_node(node_id, new_parent_id, args.agent)
+            if result.success:
+                print(f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ ✅ NODE MOVED                                                                ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ {result.message:<76} ║
+║ Agent: {args.agent:<69} ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""")
+                print(db.get_tree())
+            else:
+                print(f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ ❌ MOVE FAILED                                                               ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ {result.message:<76} ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 """)
 
         elif args.command == 'cleanup':
