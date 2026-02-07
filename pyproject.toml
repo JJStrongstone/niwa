@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "niwa"
-version = "0.2.8"
+version = "0.2.9"
 description = "Async conflict-aware spec/planning, for me, you and your LLM/agent"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 authors = [
     { name = "Nourdine Lotfi", email = "secemp9@gmail.com" }
 ]
@@ -29,7 +29,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -42,6 +41,7 @@ dependencies = [
     "markdown-it-py>=3.0.0",
     "mdit-py-plugins>=0.4.0",
     "linkify-it-py>=2.0.0",
+    "tiktoken>=0.5.0",
 ]
 
 [project.optional-dependencies]
