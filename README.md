@@ -380,6 +380,14 @@ pytest tests/ --cov=niwa --cov-report=html
 - Adversarial inputs (unclosed fences, HTML comments)
 - Round-trip export
 
+## See Also
+
+**[jari(砂利)](https://github.com/secemp9/jari)** — Task/issue tracker for LLM agent workflows. Jari uses the same LMDB + conflict detection patterns as Niwa, and supports linking todos directly to Niwa node IDs. Use them together: Niwa for collaborative document editing, Jari for tracking tasks and issues.
+
+```bash
+pipx install jari
+```
+
 ## Name
 
 Niwa (庭) means "garden" in Japanese. Like a zen garden where gravel (砂利, jari) is raked into patterns, Niwa helps organize your plans and specs with deliberate structure. Multiple agents can collaboratively tend the same garden without disturbing each other's patterns.
