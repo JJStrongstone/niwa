@@ -1,4 +1,4 @@
-# Niwa 庭
+# niwa(庭)
 
 **Async conflict-aware spec/planning, for me, you and your LLM/agent**
 
@@ -112,14 +112,13 @@ niwa export > updated.md
 ### Browse
 | Command | Description |
 |---------|-------------|
-| `tree` | Show document structure with node IDs |
-| `peek <id>` | Quick view (doesn't track read version) |
+| `tree` | Show document structure with node IDs, token counts, and AST summary |
 | `search <query>` | Find content by keyword |
 
 ### Edit
 | Command | Description |
 |---------|-------------|
-| `read <id> --agent <name>` | Read for editing (tracks version) |
+| `read <id> --agent <name>` | Read for editing; large nodes show structural overview first (use `--all` for full content, `--section N` for a section, `--lines M-N` for a line range) |
 | `edit <id> <content> --agent <name>` | Edit a node |
 | `resolve <id> <resolution> --agent <name>` | Resolve a conflict |
 | `title <id> <title>` | Update node title |
